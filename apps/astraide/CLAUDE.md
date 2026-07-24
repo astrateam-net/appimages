@@ -10,6 +10,13 @@ This file is the single source of truth for this app. It replaces the old README
 PROBLEM docs. Everything below is a **contract**: verified behavior, not aspiration. If you
 change behavior, change this file in the same commit.
 
+> **Active work item**: [HANDOFF-mobile-pairing-v3.md](HANDOFF-mobile-pairing-v3.md) — web
+> mobile pairing (patch `0002`) is **authored, tested, exported, and verified against pristine
+> `v1.4.153`** (see §1b/§4). Remaining before the handoff can be deleted: CI rebuild of the
+> AppImage, the control-plane template change (`--pairing-address` with the Coder session
+> token), and live verification in CT 100 + a real cellular phone scan per the handoff's
+> acceptance criteria.
+
 ---
 
 ## 1. The problem and the design
@@ -20,8 +27,18 @@ time — it can never carry a runtime-minted fragment — so a stock tile lands 
 pairing code" form. `code-server` solves the same problem with `--auth none` + loopback bind,
 trusting the proxy that already authenticated the user.
 
-The patch (`patches/0001-serve-trusted-proxy-web-session.patch`) adds one opt-in capability,
-`serve --trusted-proxy`, that keeps Orca's E2EE intact:
+`patches/` is a **series**: one patch per logical capability, applied in filename order by the
+Dockerfile (`for p in /patches/*.patch`). Patches are scoped by logic, never by count — a new
+independent capability gets the next number.
+
+| Patch | Capability |
+|---|---|
+| `0001-serve-trusted-proxy-web-session.patch` | Orca web UI behind Coder (trusted-proxy session) — §1a |
+| `0002-web-mobile-pairing.patch` | Mobile pairing from the web client through Coder — §1b |
+
+### 1a. Patch 0001 — trusted-proxy web session
+
+Adds one opt-in capability, `serve --trusted-proxy`, that keeps Orca's E2EE intact:
 
 | Piece | Contract | Where |
 |---|---|---|
@@ -43,6 +60,36 @@ per-user Coder workspace), never on shared multi-user machines.
 so a stored offer stays valid across restarts of the *same* server process state. The web client
 persists the environment and reuses it; re-fetching per load would mint a new device each
 reload. Recovery (above) handles the re-key case.
+
+### 1b. Patch 0002 — web-client mobile pairing
+
+Stock Orca's Settings → Mobile / "Pair this computer" screen is desktop-Electron-only: in the
+web client every `window.api.mobile.*` call was a hardcoded stub ("No interfaces found").
+The LAN-interface model is also wrong behind Coder — the workspace's IPs are never
+phone-reachable; the only address worth advertising is the Coder subdomain URL.
+
+| Piece | Contract | Where |
+|---|---|---|
+| **Runtime-RPC mint** | New methods `mobile.createPairingOffer` (`{rotate?}`, **strict** — caller-supplied addresses are an error), `mobile.listDevices`, `mobile.revokeDevice`. Authorization = `ctx.trustedMobilePairing`, injected at the WS transport boundary **only for `runtime`-scope connections**; absent → fail closed. None are in `MOBILE_RPC_METHOD_ALLOWLIST`, so a **paired phone (`mobile` scope) can never mint or revoke credentials** — both gates are test-enforced (`mobile-pairing.test.ts`, `mobile-rpc-allowlist.test.ts`). | `src/main/runtime/rpc/methods/mobile-pairing.ts`, `runtime-rpc.ts` (`buildTrustedMobilePairingContext`) |
+| **Server-side address policy** | Offers mint against the serve-configured `--pairing-address` with connection mode pinned `local-only` (headless serve has no Relay provider; Coder covers "anywhere"). No address configured → honest `available:false` with guidance. | `runtime-rpc.ts` |
+| **Web preload** | `getPairingQR`/`listDevices`/`revokeDevice` call runtime RPC; QR rendered client-side (`qrcode/lib/browser`, same params as desktop main). | `src/renderer/src/web/web-preload-api.ts` |
+| **Web UI** | Web client pins connection mode `local-only`; Relay/Local chooser replaced by a "connects through this workspace's web address" notice; interface picker + address step hidden (both the MobilePage hero and Settings → Mobile). Gate = `isWebClientLocation()`. | `use-mobile-pairing-connection-mode.ts`, `MobilePairingConnectionOptions.tsx`, `MobileHero.tsx`, `MobilePairingSetupSection.tsx` |
+
+**The advertised endpoint** (what the QR carries, minted by the template — see §5):
+
+```
+wss://<app-slug>--<agent>--<workspace>--<owner>.<wildcard>/?coder_session_token=<token>
+```
+
+Coder authenticates the phone's wss upgrade via the `coder_session_token` query param (same
+lane as Coder's own web terminal), proxies to the loopback WS listener, and Orca's E2EE
+device-token handshake runs on top: **Coder is authn, Orca is authz + E2EE**.
+
+**Security invariants (do not regress):** the pairing URL is a double secret (Orca device
+token + Coder session token) — owner-tile/serve.log only, never in build logs, Terraform
+outputs, or `coder_metadata`. The tokenized URL also appears in the loopback-gated
+`/trusted-session` offer body via `trustedProxyAddress` — accepted (single-owner workspace).
+Coder-token expiry is recoverable: Regenerate (`rotate:true`) → rescan.
 
 ---
 
@@ -84,7 +131,11 @@ Non-negotiable pieces:
 - **Runtime deps** (Electron, not Node): Chromium shared libs (`libgtk-3-0 libnss3 libgbm1
   libasound2 libatk-bridge2.0-0 libatspi2.0-0 libdrm2 libxcomposite1 libxdamage1 libxfixes3
   libxkbcommon0 libxrandr2 libxss1`) plus `xvfb xauth dbus-x11`.
-- **No `--pairing-address`** — same-origin dial makes it unnecessary for the web client.
+- **`--pairing-address`** — not needed for the browser tile (same-origin dial), but **required
+  for mobile pairing** (patch 0002): the template passes
+  `--pairing-address "https://<tile-hostname>/?coder_session_token=<token>"` so QR offers
+  advertise the Coder subdomain URL. Without it, Generate code fails honestly
+  ("no advertised pairing address").
 - **Healthcheck → `GET /web-index.html`** (200). Not `/trusted-session` (503 until pairing
   init) and not the WS port itself.
 - **amd64 only** — the dev Mac (arm64) cannot run it natively. Test on Linux/amd64 (§6).
@@ -123,26 +174,37 @@ first run: serve installs `~/.local/bin/orca-ide` + a bare `orca` dispatcher —
 
 ## 4. Patch authoring workflow (fork = polygon, never a build input)
 
-The patch is authored in the fork **`mrkhachaturov/orcaide`**, branch
-**`patch/trusted-proxy-v2`** (based on verified upstream `v1.4.153`), and exported here as a
-plain `git diff` against the pinned tag. Durable worktree:
-`/Volumes/Devops/Git/Github/mrkhachaturov/orcaide-v2`. The older `patch/trusted-proxy` branch
-sits on the phantom `v1.4.154` base — do not build on it.
+Patches are authored in the fork **`mrkhachaturov/orcaide`**, branch
+**`patch/trusted-proxy-v2`** (based on verified upstream `v1.4.153`), and exported here as
+plain `git diff`s. Durable worktree: `/Volumes/Devops/Git/Github/mrkhachaturov/orcaide-v2`.
+The older `patch/trusted-proxy` branch sits on the phantom `v1.4.154` base — do not build on it.
+
+**Series layout:** patches are scoped by logic — one per capability, open-ended numbering.
+Each patch is the diff between consecutive feature boundaries (commits) on the branch, so the
+series applies in filename order on the pristine tag:
+
+| Patch | Exported as |
+|---|---|
+| `0001` (trusted-proxy session) | `git diff v1.4.153 a50eb31b5` |
+| `0002` (web mobile pairing) | `git diff a50eb31b5 <v3-commit>` |
+| next capability | `git diff <prev-boundary> <new-commit>` → `0003-….patch` |
 
 ```bash
 cd /Volumes/Devops/Git/Github/mrkhachaturov/orcaide-v2
 # …edit, commit…
-git diff v1.4.153 > <this-app>/patches/0001-serve-trusted-proxy-web-session.patch
-# verify before shipping — same mechanism the Dockerfile uses:
+git diff <prev-boundary> HEAD > <this-app>/patches/000N-<capability>.patch
+# verify the WHOLE series before shipping — same mechanism the Dockerfile uses:
 git worktree add --detach /tmp/orca-pristine v1.4.153
-git -C /tmp/orca-pristine apply --check <this-app>/patches/0001-*.patch && echo CLEAN
-git worktree remove /tmp/orca-pristine
+for p in <this-app>/patches/*.patch; do git -C /tmp/orca-pristine apply "$p" || break; done && echo CLEAN
+git worktree remove --force /tmp/orca-pristine
 ```
 
-Patch touch points: `src/cli/{specs/serve.ts,handlers/core.ts,runtime/launch.ts}`,
+Patch touch points — 0001: `src/cli/{specs/serve.ts,handlers/core.ts,runtime/launch.ts}`,
 `src/main/index.ts`, `src/main/runtime/{runtime-rpc.ts,rpc/ws-transport.ts,
 rpc/static-web-client-handler.ts}`, `src/renderer/src/web/{main.tsx,web-pairing.ts,
-web-runtime-client.ts,web-preload-api.ts}`.
+web-runtime-client.ts,web-preload-api.ts}`. 0002: `src/main/runtime/rpc/{core.ts,dispatcher.ts,
+methods/mobile-pairing.ts,methods/index.ts}`, `runtime-rpc.ts`, `web-preload-api.ts`,
+`src/renderer/src/components/{mobile,settings}/…` (see §1b table).
 
 ### Verifying fork changes locally
 
@@ -152,7 +214,10 @@ mise x pnpm@10.24.0 -- pnpm run typecheck:tsc                            # node 
 mise x pnpm@10.24.0 -- pnpm exec vitest run \
   src/renderer/src/web/web-runtime-client.test.ts \
   src/renderer/src/web/web-pairing.test.ts \
-  src/cli/runtime/launch.test.ts src/cli/args.test.ts                    # 76 tests, must pass
+  src/cli/runtime/launch.test.ts src/cli/args.test.ts \
+  src/main/runtime/rpc/methods/mobile-pairing.test.ts \
+  src/main/runtime/rpc/methods/pairing.test.ts \
+  src/main/runtime/mobile-rpc-allowlist.test.ts                          # 89 tests, must pass
 ```
 
 Known-broken baseline (NOT yours to fix): `web-preload-api.test.ts` fails 75/75 with
@@ -168,7 +233,7 @@ this environment, identical with and without local changes.
 | **appimages** (this) | `apps/astraide/` | Builds + releases the AppImage |
 | **fork** | `mrkhachaturov/orcaide` @ `patch/trusted-proxy-v2` | Patch authoring (worktree `…/orcaide-v2`) |
 | **upstream clone** | `…/astrateam-net/containers/.upstream/orca` | Read-only source for tracing |
-| **control-plane** | `terraform/coder/templates/proxmox-lxc/{astraide.tf, scripts/install-astraide.sh}` | Installs + launches in the workspace, publishes the `coder_app` tile (`url = "http://localhost:6799"`, `subdomain = true`, `share = "owner"`) |
+| **control-plane** | `terraform/coder/templates/proxmox-lxc/{astraide.tf, scripts/install-astraide.sh}` | Installs + launches in the workspace, publishes the `coder_app` tile (`url = "http://localhost:6799"`, `subdomain = true`, `share = "owner"`). For mobile pairing it must pass `--pairing-address "https://<app-hostname>/?coder_session_token=${data.coder_workspace_owner.me.session_token}"` — per-owner, never in logs/outputs/`coder_metadata`; shell vars in the templatefile-rendered script need `$${…}` escaping |
 
 Test infrastructure: `ssh coder01` → Proxmox host (user `rkadmin`, sudo for `pct`). Workspace
 LXC = **CT 100** (`astradev`); run inside it with
