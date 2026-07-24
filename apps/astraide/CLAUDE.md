@@ -33,6 +33,7 @@ independent capability gets the next number.
 | `0001-serve-trusted-proxy-web-session.patch` | Orca web UI behind Coder (trusted-proxy session) — §1a |
 | `0002-web-mobile-pairing.patch` | Mobile pairing from the web client through Coder — §1b |
 | `0003-web-runtime-share-links.patch` | Runtime-scope share links from the web client — §1c |
+| `0004-web-session-device-name.patch` | Trusted-session devices named `Web session <date>` (were the `CLI <date>` default) so the shared-access list reads honestly: Web session / Runtime / Mobile |
 
 ### 1a. Patch 0001 — trusted-proxy web session
 
@@ -202,7 +203,8 @@ series applies in filename order on the pristine tag:
 | `0001` (trusted-proxy session) | `git diff v1.4.153 a50eb31b5` |
 | `0002` (web mobile pairing) | `git diff a50eb31b5 e56b5ad5c` |
 | `0003` (web runtime share links) | `git diff e56b5ad5c 1a1d2a4e9` |
-| next capability | `git diff <prev-boundary> <new-commit>` → `0004-….patch` |
+| `0004` (web session device name) | `git diff 1a1d2a4e9 8172807c8` |
+| next capability | `git diff <prev-boundary> <new-commit>` → `0005-….patch` |
 
 ```bash
 cd /Volumes/Devops/Git/Github/mrkhachaturov/orcaide-v2
