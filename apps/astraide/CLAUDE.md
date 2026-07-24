@@ -32,6 +32,7 @@ independent capability gets the next number.
 |---|---|
 | `0001-serve-trusted-proxy-web-session.patch` | Orca web UI behind Coder (trusted-proxy session) — §1a |
 | `0002-web-mobile-pairing.patch` | Mobile pairing from the web client through Coder — §1b |
+| `0003-web-runtime-share-links.patch` | Runtime-scope share links from the web client — §1c |
 
 ### 1a. Patch 0001 — trusted-proxy web session
 
@@ -87,6 +88,22 @@ token + Coder session token) — owner-tile/serve.log only, never in build logs,
 outputs, or `coder_metadata`. The tokenized URL also appears in the loopback-gated
 `/trusted-session` offer body via `trustedProxyAddress` — accepted (single-owner workspace).
 Coder-token expiry is recoverable: Regenerate (`rotate:true`) → rescan.
+
+### 1c. Patch 0003 — web-client runtime share links
+
+Orca has two credential scopes: `mobile` (phones — RPC allowlist + payload diet) and
+`runtime` (full clients). The mobile QR (§1b) pairs a desktop app too, but it then runs
+*as a phone*. Upstream's "Advertise this app as a server → New Link" surface (runtime-scope
+grants) is desktop-only — a headless serve's grants were mintable by nobody.
+
+| Piece | Contract | Where |
+|---|---|---|
+| **Runtime-grant RPC** | `mobile.getRuntimePairingUrl` (`{rotate?}`, strict), `mobile.listRuntimeAccessGrants`, `mobile.revokeRuntimeAccess` — same `trustedMobilePairing` context gate (runtime-scope connections only; none mobile-allowlisted — a phone minting a runtime grant would be scope escalation, test-enforced). Grants mint against `--pairing-address`, scope `runtime`. | `mobile-pairing.ts`, `runtime-rpc.ts` |
+| **Web UI** | Settings → Remote Orca Servers shows the share section in web, reframed **"Share the connected server"** (the browser has no server of its own; grants belong to the workspace server it is connected to). Address picker hidden — server policy. Generate → pairing URL (paste into desktop "Add Server") + web-client URL; grants listed + revocable. | `Settings.tsx`, `RuntimeEnvironmentsPane.tsx`, `RuntimePairingGeneratorForm.tsx`, `web-preload-api.ts` |
+
+Note: the pending (never-connected) runtime device is shared between `/trusted-session`
+offers and New Link mints until first connect; New Link always rotates, and the tile's
+stale-credential recovery covers a browser that fetched an offer rotated out from under it.
 
 ---
 
@@ -183,8 +200,9 @@ series applies in filename order on the pristine tag:
 | Patch | Exported as |
 |---|---|
 | `0001` (trusted-proxy session) | `git diff v1.4.153 a50eb31b5` |
-| `0002` (web mobile pairing) | `git diff a50eb31b5 <v3-commit>` |
-| next capability | `git diff <prev-boundary> <new-commit>` → `0003-….patch` |
+| `0002` (web mobile pairing) | `git diff a50eb31b5 e56b5ad5c` |
+| `0003` (web runtime share links) | `git diff e56b5ad5c 1a1d2a4e9` |
+| next capability | `git diff <prev-boundary> <new-commit>` → `0004-….patch` |
 
 ```bash
 cd /Volumes/Devops/Git/Github/mrkhachaturov/orcaide-v2

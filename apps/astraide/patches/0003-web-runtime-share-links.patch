@@ -1,0 +1,387 @@
+diff --git a/src/main/runtime/mobile-rpc-allowlist.test.ts b/src/main/runtime/mobile-rpc-allowlist.test.ts
+index 4c477dc0b..84e5e0fd4 100644
+--- a/src/main/runtime/mobile-rpc-allowlist.test.ts
++++ b/src/main/runtime/mobile-rpc-allowlist.test.ts
+@@ -139,9 +139,16 @@ describe('mobile RPC allowlist', () => {
+     // allowlist is the first line and must never regress.
+     const allowed = mobileRpcAllowlist()
+     expect(
+-      ['mobile.createPairingOffer', 'mobile.listDevices', 'mobile.revokeDevice'].filter((method) =>
+-        allowed.has(method)
+-      )
++      [
++        'mobile.createPairingOffer',
++        'mobile.listDevices',
++        'mobile.revokeDevice',
++        // Why: runtime grants are FULL-access credentials — a phone minting one
++        // would escalate straight past its allowlist.
++        'mobile.getRuntimePairingUrl',
++        'mobile.listRuntimeAccessGrants',
++        'mobile.revokeRuntimeAccess'
++      ].filter((method) => allowed.has(method))
+     ).toEqual([])
+   })
+ 
+diff --git a/src/main/runtime/rpc/core.ts b/src/main/runtime/rpc/core.ts
+index cdca2cec4..65e859802 100644
+--- a/src/main/runtime/rpc/core.ts
++++ b/src/main/runtime/rpc/core.ts
+@@ -24,15 +24,31 @@ export type TrustedMobilePairingOfferResult =
+       connectionMode: 'automatic' | 'local-only'
+     }
+ 
++export type TrustedRuntimeGrantResult =
++  | { available: false; reason: string; guidance: string }
++  | {
++      available: true
++      pairingUrl: string
++      webClientUrl: string | null
++      endpoint: string
++      deviceId: string
++    }
++
+ // Why: mirrors the mobile: IPC handlers for web clients that have no Electron
+ // IPC. The transport injects this only for runtime-scope connections, so a
+-// paired phone (mobile scope) can never mint or revoke device credentials.
++// paired phone (mobile scope) can never mint or revoke device credentials —
++// neither mobile ones (createOffer) nor full runtime grants (createRuntimeGrant).
+ export type TrustedMobilePairingRpcContext = {
+   createOffer(params: { rotate?: boolean }): Promise<TrustedMobilePairingOfferResult>
+   listDevices(): {
+     devices: { deviceId: string; name: string; pairedAt: number; lastSeenAt: number }[]
+   }
+   revokeDevice(deviceId: string): Promise<{ revoked: boolean }>
++  createRuntimeGrant(params: { rotate?: boolean }): TrustedRuntimeGrantResult
++  listRuntimeGrants(): {
++    grants: { deviceId: string; name: string; createdAt: number; lastSeenAt: number | null }[]
++  }
++  revokeRuntimeGrant(deviceId: string): { revoked: boolean }
+ }
+ 
+ export type RpcEnvelopeMeta = {
+diff --git a/src/main/runtime/rpc/methods/mobile-pairing.test.ts b/src/main/runtime/rpc/methods/mobile-pairing.test.ts
+index b1186ade9..2b5ebfbe1 100644
+--- a/src/main/runtime/rpc/methods/mobile-pairing.test.ts
++++ b/src/main/runtime/rpc/methods/mobile-pairing.test.ts
+@@ -33,7 +33,16 @@ function trustedContext(): NonNullable<StreamingOptions['trustedMobilePairing']>
+       connectionMode: 'local-only'
+     }),
+     listDevices: vi.fn().mockReturnValue({ devices: [] }),
+-    revokeDevice: vi.fn().mockResolvedValue({ revoked: true })
++    revokeDevice: vi.fn().mockResolvedValue({ revoked: true }),
++    createRuntimeGrant: vi.fn().mockReturnValue({
++      available: true,
++      pairingUrl: 'orca://pair?code=runtime',
++      webClientUrl: 'https://example.test/web-index.html#pairing=x',
++      endpoint: 'wss://example.test/?token=x',
++      deviceId: 'runtime-1'
++    }),
++    listRuntimeGrants: vi.fn().mockReturnValue({ grants: [] }),
++    revokeRuntimeGrant: vi.fn().mockReturnValue({ revoked: true })
+   }
+ }
+ 
+@@ -45,7 +54,10 @@ describe('mobile pairing RPC methods', () => {
+   it.each([
+     ['mobile.createPairingOffer', {}],
+     ['mobile.listDevices', {}],
+-    ['mobile.revokeDevice', { deviceId: 'device-1' }]
++    ['mobile.revokeDevice', { deviceId: 'device-1' }],
++    ['mobile.getRuntimePairingUrl', {}],
++    ['mobile.listRuntimeAccessGrants', {}],
++    ['mobile.revokeRuntimeAccess', { deviceId: 'device-1' }]
+   ])('fails closed without a trusted pairing context: %s', async (method, params) => {
+     await expect(dispatchMobilePairing(method, params, undefined)).resolves.toMatchObject({
+       ok: false
+@@ -71,6 +83,29 @@ describe('mobile pairing RPC methods', () => {
+     expect(ctx.createOffer).not.toHaveBeenCalled()
+   })
+ 
++  it('mints runtime grants through the context; caller cannot pick the address', async () => {
++    const ctx = trustedContext()
++    await expect(
++      dispatchMobilePairing('mobile.getRuntimePairingUrl', { rotate: true }, ctx)
++    ).resolves.toMatchObject({
++      ok: true,
++      result: { available: true, deviceId: 'runtime-1' }
++    })
++    expect(ctx.createRuntimeGrant).toHaveBeenCalledWith({ rotate: true })
++
++    await expect(
++      dispatchMobilePairing('mobile.getRuntimePairingUrl', { address: 'wss://evil.test' }, ctx)
++    ).resolves.toMatchObject({ ok: false })
++
++    await expect(
++      dispatchMobilePairing('mobile.listRuntimeAccessGrants', {}, ctx)
++    ).resolves.toMatchObject({ ok: true, result: { grants: [] } })
++    await expect(
++      dispatchMobilePairing('mobile.revokeRuntimeAccess', { deviceId: 'runtime-1' }, ctx)
++    ).resolves.toMatchObject({ ok: true, result: { revoked: true } })
++    expect(ctx.revokeRuntimeGrant).toHaveBeenCalledWith('runtime-1')
++  })
++
+   it('lists and revokes devices through the context', async () => {
+     const ctx = trustedContext()
+     await expect(dispatchMobilePairing('mobile.listDevices', {}, ctx)).resolves.toMatchObject({
+diff --git a/src/main/runtime/rpc/methods/mobile-pairing.ts b/src/main/runtime/rpc/methods/mobile-pairing.ts
+index 4a9fdbc39..8727b3dc9 100644
+--- a/src/main/runtime/rpc/methods/mobile-pairing.ts
++++ b/src/main/runtime/rpc/methods/mobile-pairing.ts
+@@ -41,5 +41,40 @@ export const MOBILE_PAIRING_METHODS: readonly RpcAnyMethod[] = [
+       }
+       return await ctx.trustedMobilePairing.revokeDevice(params.deviceId)
+     }
++  }),
++  // Why: the "Share this Orca server" surface for web clients — full runtime
++  // grants for desktop/browser clients. Same authorization story as above:
++  // context injected only for runtime-scope connections; runtime→runtime is
++  // not an escalation, but a phone minting a runtime grant would be.
++  defineMethod({
++    name: 'mobile.getRuntimePairingUrl',
++    // Why: strict — the advertised address is server policy (--pairing-address).
++    params: z.object({ rotate: z.boolean().optional() }).strict(),
++    handler: (params, ctx) => {
++      if (!ctx.trustedMobilePairing) {
++        throw new Error('trusted_mobile_pairing_unavailable')
++      }
++      return ctx.trustedMobilePairing.createRuntimeGrant({ rotate: params.rotate })
++    }
++  }),
++  defineMethod({
++    name: 'mobile.listRuntimeAccessGrants',
++    params: null,
++    handler: (_params, ctx) => {
++      if (!ctx.trustedMobilePairing) {
++        throw new Error('trusted_mobile_pairing_unavailable')
++      }
++      return ctx.trustedMobilePairing.listRuntimeGrants()
++    }
++  }),
++  defineMethod({
++    name: 'mobile.revokeRuntimeAccess',
++    params: z.object({ deviceId: z.string().min(1) }).strict(),
++    handler: (params, ctx) => {
++      if (!ctx.trustedMobilePairing) {
++        throw new Error('trusted_mobile_pairing_unavailable')
++      }
++      return ctx.trustedMobilePairing.revokeRuntimeGrant(params.deviceId)
++    }
+   })
+ ]
+diff --git a/src/main/runtime/runtime-rpc.ts b/src/main/runtime/runtime-rpc.ts
+index 82484e4da..155e86654 100644
+--- a/src/main/runtime/runtime-rpc.ts
++++ b/src/main/runtime/runtime-rpc.ts
+@@ -762,7 +762,46 @@ export class OrcaRuntimeRpcServer {
+             lastSeenAt: d.lastSeenAt
+           }))
+       }),
+-      revokeDevice: async (deviceId) => ({ revoked: await this.revokeMobileDevice(deviceId) })
++      revokeDevice: async (deviceId) => ({ revoked: await this.revokeMobileDevice(deviceId) }),
++      // Why: the web tile's "Share this Orca server" surface — runtime-scope
++      // grants for full clients (desktop app, another browser). Minting runtime
++      // from runtime is not an escalation; the context gate still keeps phones
++      // out. Note the pending runtime device is shared with /trusted-session
++      // offers until first connect; the web client's stale-credential recovery
++      // covers the rotate-in-between case.
++      createRuntimeGrant: ({ rotate }) => {
++        const offer = this.createPairingOffer({
++          address: this.trustedProxyAddress,
++          rotate,
++          name: `Runtime ${new Date().toLocaleDateString()}`,
++          scope: 'runtime'
++        })
++        if (!offer.available) {
++          return { available: false, reason: offer.reason, guidance: offer.guidance }
++        }
++        return {
++          available: true,
++          pairingUrl: offer.pairingUrl,
++          webClientUrl: offer.webClientUrl,
++          endpoint: offer.endpoint,
++          deviceId: offer.deviceId
++        }
++      },
++      listRuntimeGrants: () => ({
++        // Why: mirror mobile:listRuntimeAccessGrants — pending runtime grants
++        // are bearer credentials even before first connect, so they must stay
++        // listed and revocable.
++        grants: (this.deviceRegistry?.listDevices() ?? [])
++          .filter((d) => d.scope === 'runtime')
++          .sort((a, b) => b.pairedAt - a.pairedAt)
++          .map((d) => ({
++            deviceId: d.deviceId,
++            name: d.name,
++            createdAt: d.pairedAt,
++            lastSeenAt: d.lastSeenAt > 0 ? d.lastSeenAt : null
++          }))
++      }),
++      revokeRuntimeGrant: (deviceId) => ({ revoked: this.revokeRuntimeAccess(deviceId) })
+     }
+   }
+ 
+diff --git a/src/renderer/src/components/settings/RuntimeEnvironmentsPane.tsx b/src/renderer/src/components/settings/RuntimeEnvironmentsPane.tsx
+index 54184982e..87f738559 100644
+--- a/src/renderer/src/components/settings/RuntimeEnvironmentsPane.tsx
++++ b/src/renderer/src/components/settings/RuntimeEnvironmentsPane.tsx
+@@ -47,6 +47,7 @@ import {
+   DialogTitle
+ } from '../ui/dialog'
+ import { RuntimePairingUrlGenerator } from './RuntimePairingUrlGenerator'
++import { isWebClientLocation } from '@/lib/web-client-location'
+ import { EphemeralVmRuntimesSection } from './EphemeralVmRuntimesSection'
+ import {
+   getRuntimeEnvironmentsSearchEntry,
+@@ -1272,16 +1273,26 @@ export function RuntimeEnvironmentsPane({
+         <div className="space-y-3 pt-2">
+           <div className="space-y-0.5">
+             <div className="text-sm font-medium">
+-              {translate(
+-                'auto.components.settings.RuntimeEnvironmentsPane.advertiseThisApp',
+-                'Advertise this app as a server'
+-              )}
++              {isWebClientLocation()
++                ? translate(
++                    'auto.components.settings.RuntimeEnvironmentsPane.advertiseConnectedServer',
++                    'Share the connected server'
++                  )
++                : translate(
++                    'auto.components.settings.RuntimeEnvironmentsPane.advertiseThisApp',
++                    'Advertise this app as a server'
++                  )}
+             </div>
+             <p className="text-xs text-muted-foreground">
+-              {translate(
+-                'auto.components.settings.RuntimeEnvironmentsPane.advertiseThisAppHelp',
+-                'Create access links for browsers, mobile clients, or another Orca client to connect back to this running app.'
+-              )}
++              {isWebClientLocation()
++                ? translate(
++                    'auto.components.settings.RuntimeEnvironmentsPane.advertiseConnectedServerHelp',
++                    'Create access links so your desktop app, another browser, or another Orca client can connect to this server through its web address.'
++                  )
++                : translate(
++                    'auto.components.settings.RuntimeEnvironmentsPane.advertiseThisAppHelp',
++                    'Create access links for browsers, mobile clients, or another Orca client to connect back to this running app.'
++                  )}
+             </p>
+           </div>
+           <div className="overflow-hidden rounded-lg border border-border/50 bg-card/30">
+diff --git a/src/renderer/src/components/settings/RuntimePairingGeneratorForm.tsx b/src/renderer/src/components/settings/RuntimePairingGeneratorForm.tsx
+index 5557f6176..30c39b0bb 100644
+--- a/src/renderer/src/components/settings/RuntimePairingGeneratorForm.tsx
++++ b/src/renderer/src/components/settings/RuntimePairingGeneratorForm.tsx
+@@ -6,6 +6,7 @@ import { AddressPicker, type AddressOption } from '../network/AddressPicker'
+ import { parseServerShareAddress } from '../../../../shared/network/server-share-address'
+ import { GeneratedUrlRow, UnavailableUrlRow } from './RuntimePairingGeneratedUrlRows'
+ import { translate } from '@/i18n/i18n'
++import { isWebClientLocation } from '@/lib/web-client-location'
+ 
+ type RuntimePairingGeneratorFormProps = {
+   loopbackAddress: string
+@@ -50,10 +51,26 @@ export function RuntimePairingGeneratorForm({
+     }))
+   ]
+ 
++  // Why: in the web client the advertised address is server policy
++  // (serve --pairing-address, the workspace's public URL); there is no
++  // meaningful interface choice, so the address controls disappear and the
++  // form is just Generate + the resulting links.
++  const serverManagedAddress = isWebClientLocation()
++
+   return (
+     <>
+       <div className="space-y-3">
+-        <div className="space-y-1">
++        {serverManagedAddress ? (
++          <p className="text-xs text-muted-foreground">
++            {translate(
++              'auto.components.settings.RuntimePairingUrlGenerator.webAddressNotice',
++              'Access links connect through this server’s web address, so they work from any network. Each generated link is a fresh revocable credential.'
++            )}
++          </p>
++        ) : null}
++        {serverManagedAddress ? null : (
++          <>
++          <div className="space-y-1">
+           <Label id="runtime-pairing-address-label" htmlFor="runtime-pairing-address">
+             {translate(
+               'auto.components.settings.RuntimePairingUrlGenerator.de77eb1b65',
+@@ -153,6 +170,8 @@ export function RuntimePairingGeneratorForm({
+             '127.0.0.1 only works on this computer. Use a LAN, Tailscale, or custom address for another device.'
+           )}
+         </p>
++          </>
++        )}
+         <div className="flex justify-end">
+           <Button
+             type="button"
+diff --git a/src/renderer/src/components/settings/Settings.tsx b/src/renderer/src/components/settings/Settings.tsx
+index 3f80e1b31..21cf31773 100644
+--- a/src/renderer/src/components/settings/Settings.tsx
++++ b/src/renderer/src/components/settings/Settings.tsx
+@@ -1613,7 +1613,10 @@ function Settings(): React.JSX.Element {
+                     <RuntimeEnvironmentsPane
+                       settings={settings}
+                       switchRuntimeEnvironment={switchRuntimeEnvironment}
+-                      canGeneratePairingUrl={!isWebClient}
++                      // Why: in web the section shares the CONNECTED workspace
++                      // server (runtime-RPC mint, patch 0003) — the browser
++                      // itself still has no server to advertise.
++                      canGeneratePairingUrl
+                       allowLocalRuntime={!isWebClient}
+                       addServerIntentSignal={remoteServerAddIntentSignal}
+                     />
+diff --git a/src/renderer/src/web/web-preload-api.ts b/src/renderer/src/web/web-preload-api.ts
+index 4cb7d126b..d38660e0b 100644
+--- a/src/renderer/src/web/web-preload-api.ts
++++ b/src/renderer/src/web/web-preload-api.ts
+@@ -850,15 +850,45 @@ function createWebPreloadApi(): Partial<PreloadApi> {
+       getWindowsFirewallStatus: () => Promise.resolve({ supported: false }),
+       repairWindowsFirewall: () => Promise.resolve({ ok: false, reason: 'unsupported' }),
+       openWindowsNetworkSettings: () => Promise.resolve(false),
+-      getRuntimePairingUrl: () => Promise.resolve({ available: false }),
++      // Why: "Share this Orca server" in the web tile mints RUNTIME grants for
++      // the connected server (the browser has no server of its own to
++      // advertise). Address is server policy and not forwarded — same contract
++      // as getPairingQR above.
++      getRuntimePairingUrl: async (args?: { address?: string; rotate?: boolean }) => {
++        const offer = await callRuntimeResult<
++          | { available: false; reason?: string; guidance?: string }
++          | {
++              available: true
++              pairingUrl: string
++              webClientUrl: string | null
++              endpoint: string
++              deviceId: string
++            }
++        >('mobile.getRuntimePairingUrl', args?.rotate ? { rotate: true } : {})
++        if (!offer.available) {
++          console.warn('[mobile] runtime grant unavailable:', offer.reason, offer.guidance)
++          return { available: false as const }
++        }
++        return {
++          available: true as const,
++          pairingUrl: offer.pairingUrl,
++          webClientUrl: offer.webClientUrl,
++          endpoint: offer.endpoint,
++          deviceId: offer.deviceId
++        }
++      },
+       listDevices: () =>
+         callRuntimeResult<{
+           devices: { deviceId: string; name: string; pairedAt: number; lastSeenAt: number }[]
+         }>('mobile.listDevices').catch(() => ({ devices: [] })),
+       revokeDevice: (args: { deviceId: string }) =>
+         callRuntimeResult<{ revoked: boolean }>('mobile.revokeDevice', args),
+-      listRuntimeAccessGrants: () => Promise.resolve({ grants: [] }),
+-      revokeRuntimeAccess: () => Promise.resolve({ revoked: false }),
++      listRuntimeAccessGrants: () =>
++        callRuntimeResult<{
++          grants: { deviceId: string; name: string; createdAt: number; lastSeenAt: number | null }[]
++        }>('mobile.listRuntimeAccessGrants').catch(() => ({ grants: [] })),
++      revokeRuntimeAccess: (args: { deviceId: string }) =>
++        callRuntimeResult<{ revoked: boolean }>('mobile.revokeRuntimeAccess', args),
+       isWebSocketReady: () =>
+         Promise.resolve({ ready: Boolean(activeEnvironment), endpoint: null }),
+       getRelayStatus: () => Promise.resolve({ status: 'offline' as const }),
