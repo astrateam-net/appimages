@@ -31,7 +31,17 @@
    `lastSeenAt 06:54:50`. Tile regression clean after everything: loopback-only bind,
    `/web-index.html` 200, `/trusted-session` 200.
 
-**Restart survival: FAILED first test, fix prepared (control-plane).** Verified live:
+**Restart survival: PASSED (2026-07-24 07:07Z)** — durable-token template applied, phone
+re-paired once, workspace restarted, phone reconnected on its own. One refinement found in
+the logs and fixed afterward (control-plane, pending one more plan/apply): the cached-token
+validation must probe the **app lane** (`https://<app-host>/web-index.html?coder_session_token=…`,
+2xx/5xx = valid, 3xx/4xx = re-mint), NOT `/api/v2/users/me` — an `application_connect`-scoped
+token is RBAC-denied there (404), which silently re-minted a fresh token every boot (works,
+but accumulates API keys and rotates the advertised address each restart). Predicate verified
+live from inside CT 100: valid token → 200, garbage → 303. Stray `astraide-mobile-*` tokens
+from the re-mint boots can be pruned in Coder → Account → Tokens.
+
+**Original failure for the record:** Verified live:
 `data.coder_workspace_owner.me.session_token` is **revoked on every rebuild** (old token →
 303, serve advertises a new one), so a QR carrying it dies on workspace restart — the UI
 shows the phone as paired (registry persists) while the phone loops reconnecting. Fix in
