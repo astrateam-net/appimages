@@ -16,21 +16,26 @@
 - `typecheck:tsc` clean; focused vitest 89/89 green incl. new scope tests
   (phone-scope cannot mint — allowlist + fail-closed context both test-enforced).
 
-**Remaining** (acceptance criteria below still to be proven live):
+**LIVE — pairing succeeded 2026-07-24 06:54Z.** Full trail:
 
-1. ~~Commit/push this repo → CI republishes asset~~ **DONE** — asset republished 06:30Z, CI green.
-2. ~~Control-plane template `--pairing-address`~~ **DONE & DEPLOYED** — QR renders in the tile,
-   serve advertises the tokenized wss URL (verified in serve.log).
-3. Live pairing: **BLOCKED ON PUBLIC EDGE, not on this patch.** Verified 2026-07-24: the full
-   chain works over the internal path (10.1.125.235) — Coder query-param auth 200, real WS
-   client upgrade OPEN, Orca accepts. But the public edge `zt.astrateam.net` (5.42.122.90),
-   which phones hit via public DNS (cellular, and Wi-Fi under iCloud Private Relay/DoH),
-   terminates TLS with a `*.astrateam.net` cert that does NOT cover `*.portal.astrateam.net`
-   (one-level wildcard) → iOS closes the socket instantly ("WebSocket closed" loop).
-   **Fix in control-plane**: give the zt edge a `*.portal.astrateam.net` cert (or SNI
-   passthrough to the internal Traefik) + route those hosts to Coder with WS upgrades.
-   Then rescan on cellular. Phone device credential verified healthy in orca-devices.json
-   (pending mobile entry matches the QR token).
+1. Asset republished 06:30Z (CI green); template deployed; QR renders in the tile; serve
+   advertises the tokenized wss URL (serve.log).
+2. First phone attempts failed with an instant "WebSocket closed" loop — root cause was the
+   **public edge**, not the patch: `zt.astrateam.net` (5.42.122.90) served a
+   `*.astrateam.net` cert that cannot cover `*.portal.astrateam.net` (one-level wildcard).
+   Phones hit the edge via public DNS (cellular/VPN, and Wi-Fi under iCloud Private
+   Relay/DoH). Internal path was verified working the whole time (query-param auth 200, real
+   WS client upgrade OPEN).
+3. Operator fixed the edge (portal wildcard cert + WS routing) → phone (iOS 0.0.34 preview,
+   external VPN path) completed the E2EE handshake: registry shows the mobile device
+   `lastSeenAt 06:54:50`. Tile regression clean after everything: loopback-only bind,
+   `/web-index.html` 200, `/trusted-session` 200.
+
+Still worth a pass before deleting this handoff: phone survival across a workspace
+restart + regenerate-after-Coder-token-expiry, and a self-service revoke from the web
+Settings → Mobile pane. Security note: one pairing code (device token + Coder session
+token) was pasted into an agent chat during debugging — self-service revoke + re-pair
+rotates the device credential; the Coder token rotates on the next workspace build.
 
 ## Mission
 
