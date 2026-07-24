@@ -11,8 +11,8 @@ PROBLEM docs. Everything below is a **contract**: verified behavior, not aspirat
 change behavior, change this file in the same commit.
 
 > Mobile pairing (patch `0002`) went **live 2026-07-24**: phone paired through the public
-> edge and survives workspace restarts (verified). The v3 handoff is folded into §1b, §5,
-> and §6 and deleted.
+> edge and survives workspace restarts (verified). The v3 handoff is folded into §1b, §4,
+> and §5 and deleted.
 
 ---
 
@@ -28,16 +28,10 @@ trusting the proxy that already authenticated the user.
 Dockerfile (`for p in /patches/*.patch`). Patches are scoped by logic, never by count — a new
 independent capability gets the next number.
 
-| Patch | Capability |
-|---|---|
-| `0001-serve-trusted-proxy-web-session.patch` | Orca web UI behind Coder (trusted-proxy session) — §1a |
-| `0002-web-mobile-pairing.patch` | Mobile pairing from the web client through Coder — §1b |
-| `0003-web-runtime-share-links.patch` | Runtime-scope share links from the web client — §1c |
-| `0004-web-resource-manager.patch` | Resource Manager in the web client shows the WORKSPACE's processes + host RAM/CPU (web preload `memory.getSnapshot` → runtime `diagnostics.memory`; was an empty-snapshot stub) |
-
-Naming note: trusted-session devices are named `Web session <date>` (part of 0001 — it fixes
-0001's own mint, which previously leaked the upstream `CLI <date>` default), so the
-shared-access list reads honestly: Web session / Runtime / Mobile.
+**Each patch `000N` is a release.** The per-patch list — what shipped in each patch and why —
+lives in [CHANGELOG.md](CHANGELOG.md) (newest first); pushing a patch to `appimages` main
+republishes the AppImage (§3). Deep contracts for the security-sensitive capabilities stay
+here as §1a–§1c and are linked from the changelog.
 
 ### 1a. Patch 0001 — trusted-proxy web session
 
@@ -78,7 +72,7 @@ phone-reachable; the only address worth advertising is the Coder subdomain URL.
 | **Web preload** | `getPairingQR`/`listDevices`/`revokeDevice` call runtime RPC; QR rendered client-side (`qrcode/lib/browser`, same params as desktop main). | `src/renderer/src/web/web-preload-api.ts` |
 | **Web UI** | Web client pins connection mode `local-only`; Relay/Local chooser replaced by a "connects through this workspace's web address" notice; interface picker + address step hidden (both the MobilePage hero and Settings → Mobile). Gate = `isWebClientLocation()`. | `use-mobile-pairing-connection-mode.ts`, `MobilePairingConnectionOptions.tsx`, `MobileHero.tsx`, `MobilePairingSetupSection.tsx` |
 
-**The advertised endpoint** (what the QR carries, minted by the template — see §5):
+**The advertised endpoint** (what the QR carries, minted by the template — see §4):
 
 ```
 wss://<app-slug>--<agent>--<workspace>--<owner>.<wildcard>/?coder_session_token=<token>
@@ -128,7 +122,7 @@ the CLI (`src/cli/runtime/launch.ts`, `serveOrcaApp`) re-encodes the user flags 
 `--serve --serve-port <p> --serve-trusted-proxy` and re-spawns the Electron binary, staying in
 the foreground to supervise it.
 
-Canonical launch (what the Coder install script does — see §5):
+Canonical launch (what the Coder install script does — see §4):
 
 ```bash
 # LXC has no FUSE → extract once per VERSION:
@@ -157,7 +151,7 @@ Non-negotiable pieces:
   ("no advertised pairing address").
 - **Healthcheck → `GET /web-index.html`** (200). Not `/trusted-session` (503 until pairing
   init) and not the WS port itself.
-- **amd64 only** — the dev Mac (arm64) cannot run it natively. Test on Linux/amd64 (§6).
+- **amd64 only** — the dev Mac (arm64) cannot run it natively. Test on Linux/amd64 (§5).
 
 ### Success criteria (all verified 2026-07-24 in CT 100 as user `coder`)
 
@@ -191,67 +185,7 @@ first run: serve installs `~/.local/bin/orca-ide` + a bare `orca` dispatcher —
 
 ---
 
-## 4. Patch authoring workflow (fork = polygon, never a build input)
-
-Patches are authored in the fork **`mrkhachaturov/orcaide`**, branch
-**`patch/trusted-proxy-v2`** (based on verified upstream `v1.4.153`), and exported here as
-plain `git diff`s. Durable worktree: `/Volumes/Devops/Git/Github/mrkhachaturov/orcaide-v2`.
-The older `patch/trusted-proxy` branch sits on the phantom `v1.4.154` base — do not build on it.
-
-**Series layout:** patches are scoped by logic — one per capability, open-ended numbering.
-Each patch is the diff between consecutive feature boundaries (commits) on the branch, so the
-series applies in filename order on the pristine tag:
-
-| Patch | Exported as |
-|---|---|
-| `0001` (trusted-proxy session, incl. `Web session` device naming) | `git diff v1.4.153 3d65845c6` |
-| `0002` (web mobile pairing) | `git diff 3d65845c6 7c145fb1a` |
-| `0003` (web runtime share links) | `git diff 7c145fb1a c94cca036` |
-| `0004` (web resource manager) | `git diff c94cca036 6375c2bf2` |
-| next capability | `git diff <prev-boundary> <new-commit>` → `0005-….patch` |
-
-A fix that belongs to an existing patch's logic is **folded into that patch** (restack the
-fork branch, re-export the series) — never appended as a new number. New numbers are for new
-capabilities only.
-
-```bash
-cd /Volumes/Devops/Git/Github/mrkhachaturov/orcaide-v2
-# …edit, commit…
-git diff <prev-boundary> HEAD > <this-app>/patches/000N-<capability>.patch
-# verify the WHOLE series before shipping — same mechanism the Dockerfile uses:
-git worktree add --detach /tmp/orca-pristine v1.4.153
-for p in <this-app>/patches/*.patch; do git -C /tmp/orca-pristine apply "$p" || break; done && echo CLEAN
-git worktree remove --force /tmp/orca-pristine
-```
-
-Patch touch points — 0001: `src/cli/{specs/serve.ts,handlers/core.ts,runtime/launch.ts}`,
-`src/main/index.ts`, `src/main/runtime/{runtime-rpc.ts,rpc/ws-transport.ts,
-rpc/static-web-client-handler.ts}`, `src/renderer/src/web/{main.tsx,web-pairing.ts,
-web-runtime-client.ts,web-preload-api.ts}`. 0002: `src/main/runtime/rpc/{core.ts,dispatcher.ts,
-methods/mobile-pairing.ts,methods/index.ts}`, `runtime-rpc.ts`, `web-preload-api.ts`,
-`src/renderer/src/components/{mobile,settings}/…` (see §1b table).
-
-### Verifying fork changes locally
-
-```bash
-mise x pnpm@10.24.0 -- pnpm install --ignore-scripts --prefer-offline   # mise has no pnpm pinned here
-mise x pnpm@10.24.0 -- pnpm run typecheck:tsc                            # node + cli + web, must be clean
-mise x pnpm@10.24.0 -- pnpm exec vitest run \
-  src/renderer/src/web/web-runtime-client.test.ts \
-  src/renderer/src/web/web-pairing.test.ts \
-  src/cli/runtime/launch.test.ts src/cli/args.test.ts \
-  src/main/runtime/rpc/methods/mobile-pairing.test.ts \
-  src/main/runtime/rpc/methods/pairing.test.ts \
-  src/main/runtime/mobile-rpc-allowlist.test.ts                          # 89 tests, must pass
-```
-
-Known-broken baseline (NOT yours to fix): `web-preload-api.test.ts` fails 75/75 with
-`Cannot find package '@/lib/browser-uuid'` — a pre-existing vitest alias-resolution quirk in
-this environment, identical with and without local changes.
-
----
-
-## 5. Deployment map
+## 4. Deployment map
 
 | Repo | Path | Role |
 |---|---|---|
@@ -279,7 +213,7 @@ LXC = **CT 100** (`astradev`); run inside it with
 
 ---
 
-## 6. Debugging gotchas (each cost real time — don't relearn them)
+## 5. Debugging gotchas (each cost real time — don't relearn them)
 
 - **Flags "ignored", binds `0.0.0.0:6768`** → you launched via `AppRun`. Use the shim (§2).
   `6768` = `DEFAULT_WS_PORT` non-trusted default; GUI-style log lines (dbus `login1 Inhibit
@@ -307,58 +241,5 @@ LXC = **CT 100** (`astradev`); run inside it with
   cannot do WS upgrades, its 200 there is meaningless.
 - **Phone shows paired in UI but can't connect after a workspace restart** → the QR carried
   the per-build session token, which Coder revokes on rebuild (registry persists → UI looks
-  fine). The durable-token mint in the install script (§5) is the fix; if it regressed,
+  fine). The durable-token mint in the install script (§4) is the fix; if it regressed,
   check `pairing-token` mtime across restarts — it must NOT change on a healthy boot.
-
----
-
-## 7. Playbook — the next broken web feature (how 0002–0004 were built)
-
-Orca's web client replaces the entire Electron preload with
-`src/renderer/src/web/web-preload-api.ts` (`createWebPreloadApi(): Partial<PreloadApi>`),
-and upstream **stubs most of it** — empty lists, `{ available: false }`, no-op functions,
-throw-on-call. That single fact explains nearly every "works on desktop, dead in the tile"
-report ("No interfaces found", "WebSocket transport is not running", "Local PTYs are
-unavailable", Resource Manager all zeros — every one of these was a stub). When the user
-reports the next one, run this sequence:
-
-1. **Find the stub.** Grep the exact error string or the `window.api.<ns>` name in
-   `web-preload-api.ts`. If the value is hardcoded (`Promise.resolve({...})`,
-   `createEmpty…()`, `Promise.reject(new Error(…))`) — it's a stub, not a bug.
-2. **Read the real contract.** Desktop truth lives in `src/preload/index.ts` (surface +
-   types, mirrored in `src/preload/api-types.ts`) and `src/main/ipc/*.ts` (handlers).
-   Mirror that contract exactly — 1:1 names and shapes keep the renderer untouched.
-3. **Check for an existing runtime RPC first.** `src/main/runtime/rpc/methods/` +
-   `ALL_RPC_METHODS` in `methods/index.ts`. If the phone already uses an equivalent
-   (see `MOBILE_RPC_METHOD_ALLOWLIST` in `runtime-rpc.ts`), the fix is a one-liner:
-   route the stub through `callRuntimeResult('<method>')` — that was all of 0004
-   (`memory.getSnapshot` → `diagnostics.memory`).
-4. **No RPC? Add one the 0002/0003 way.** New methods in
-   `methods/mobile-pairing.ts`-style modules; **authorization = the
-   `trustedMobilePairing` context**, injected in `handleWebSocketMessage` ONLY for
-   `runtime`-scope connections — handlers throw when it's absent (fail closed).
-   Strict zod params (`.strict()` — server-policy fields like addresses must error, not
-   strip). Server callbacks live in `buildTrustedMobilePairingContext()` so the method
-   module never touches the rpc server directly.
-5. **Scope rules (never regress):** `mobile` scope = allowlist + payload diet; `runtime` =
-   full. New methods stay OUT of `MOBILE_RPC_METHOD_ALLOWLIST` unless phones genuinely
-   need them; anything that mints/revokes credentials must never be phone-reachable
-   (mint = escalation). Extend BOTH test gates: fail-closed cases in
-   `mobile-pairing.test.ts` and the not-allowlisted assertion in
-   `mobile-rpc-allowlist.test.ts`.
-6. **UI gating:** `isWebClientLocation()` (`@/lib/web-client-location`, constant per page
-   load — safe to branch on before hooks via a wrapper component). Hide desktop-only
-   affordances (interface pickers, custom addresses, Relay); the advertised address is
-   ALWAYS server policy (`--pairing-address`). Reframe copy for the web perspective
-   (the browser is a client; "this app" is the workspace server).
-7. **Verify + ship:** `typecheck:tsc`; focused vitest (§4 list); commit in the fork;
-   export the boundary diff (§4 table — fold fixes into their patch, new number only for
-   new capability); apply the whole series on pristine `v1.4.153`; update THIS file's
-   tables; push appimages main (CI republishes same-tag; `[skip ci]` for docs-only);
-   restart workspace (ETag refresh); verify live in CT 100 (§5 recipes).
-
-**Know what you cannot fix server-side:** anything requiring the STOCK phone/desktop
-client to change ships only via upstream PR — e.g. the pairing offer carries no server
-name, so phones default to "Host 1" (rename manually on the phone; upstream PR is the
-real fix). If the web client needs data the runtime doesn't expose at all, the RPC method
-is the patch; if the *client app* needs new behavior, it's upstream's court.
