@@ -10,12 +10,9 @@ This file is the single source of truth for this app. It replaces the old README
 PROBLEM docs. Everything below is a **contract**: verified behavior, not aspiration. If you
 change behavior, change this file in the same commit.
 
-> **Active work item**: [HANDOFF-mobile-pairing-v3.md](HANDOFF-mobile-pairing-v3.md) — web
-> mobile pairing (patch `0002`) is **authored, tested, exported, and verified against pristine
-> `v1.4.153`** (see §1b/§4). Remaining before the handoff can be deleted: CI rebuild of the
-> AppImage, the control-plane template change (`--pairing-address` with the Coder session
-> token), and live verification in CT 100 + a real cellular phone scan per the handoff's
-> acceptance criteria.
+> Mobile pairing (patch `0002`) went **live 2026-07-24**: phone paired through the public
+> edge and survives workspace restarts (verified). The v3 handoff is folded into §1b, §5,
+> and §6 and deleted.
 
 ---
 
@@ -233,7 +230,19 @@ this environment, identical with and without local changes.
 | **appimages** (this) | `apps/astraide/` | Builds + releases the AppImage |
 | **fork** | `mrkhachaturov/orcaide` @ `patch/trusted-proxy-v2` | Patch authoring (worktree `…/orcaide-v2`) |
 | **upstream clone** | `…/astrateam-net/containers/.upstream/orca` | Read-only source for tracing |
-| **control-plane** | `terraform/coder/templates/proxmox-lxc/{astraide.tf, scripts/install-astraide.sh}` | Installs + launches in the workspace, publishes the `coder_app` tile (`url = "http://localhost:6799"`, `subdomain = true`, `share = "owner"`). For mobile pairing it must pass `--pairing-address "https://<app-hostname>/?coder_session_token=${data.coder_workspace_owner.me.session_token}"` — per-owner, never in logs/outputs/`coder_metadata`; shell vars in the templatefile-rendered script need `$${…}` escaping |
+| **control-plane** | `terraform/coder/templates/proxmox-lxc/{astraide.tf, scripts/install-astraide.sh}` | Installs + launches in the workspace, publishes the `coder_app` tile (`url = "http://localhost:6799"`, `subdomain = true`, `share = "owner"`). Mobile pairing: the script passes `--pairing-address "https://<app-hostname>/?coder_session_token=<durable token>"` |
+
+**Durable pairing token (verified live 2026-07-24):** `data.coder_workspace_owner.me.session_token`
+is **revoked on every rebuild**, so it is only the *bootstrap* credential. The install script
+mints an `application_connect`-scoped owner token once (`POST /api/v2/users/me/keys/tokens`,
+lifetime 30d → 7d fallback, ns-valued `lifetime`), caches it 0600 at
+`<module_dir>/pairing-token`, and validates it each start **against the app lane**
+(`GET https://<app-host>/web-index.html?coder_session_token=…`; 2xx/5xx = valid, 3xx/4xx =
+re-mint) — NOT `/api/v2/users/me`, where that scope is RBAC-denied (404) and would silently
+re-mint every boot. Phones therefore survive workspace restarts; re-pair is only needed when
+the durable token expires (Regenerate → rescan). Tokens are never echoed; templatefile
+escaping: shell `$${…}` AND curl format `%%{http_code}` (both `${` and `%{` are template
+directives).
 
 Test infrastructure: `ssh coder01` → Proxmox host (user `rkadmin`, sudo for `pct`). Workspace
 LXC = **CT 100** (`astradev`); run inside it with
@@ -260,3 +269,15 @@ LXC = **CT 100** (`astradev`); run inside it with
   (no logind session / software GL) — they do not abort the listener.
 - Cmdline of a live process: `tr '\0' ' ' < /proc/<pid>/cmdline` — the fastest way to see
   whether the CLI translated flags to `--serve-*` for the Electron child.
+- **Phone loops "WebSocket closed" while the browser tile works** → the phone is on the
+  PUBLIC DNS path (cellular/VPN, or Wi-Fi with iCloud Private Relay/DoH) hitting the edge,
+  not the internal Traefik. A `*.astrateam.net` cert **cannot** cover
+  `*.portal.astrateam.net` — wildcards match ONE level. Check with
+  `openssl s_client -servername <app-host> -connect <edge-ip>:443`; the edge needs the
+  portal wildcard cert (or SNI passthrough) + WS routing. Discriminate layers: GET with
+  `?coder_session_token=` (Coder authn) vs a real WS client (`node -e` with `ws`) — curl
+  cannot do WS upgrades, its 200 there is meaningless.
+- **Phone shows paired in UI but can't connect after a workspace restart** → the QR carried
+  the per-build session token, which Coder revokes on rebuild (registry persists → UI looks
+  fine). The durable-token mint in the install script (§5) is the fix; if it regressed,
+  check `pairing-token` mtime across restarts — it must NOT change on a healthy boot.
