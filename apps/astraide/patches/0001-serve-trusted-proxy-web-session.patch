@@ -227,7 +227,7 @@ index 6933657b5..28bd0fce8 100644
      return this.tlsCert && this.tlsKey
        ? createHttpsServer({ cert: this.tlsCert, key: this.tlsKey }, requestListener)
 diff --git a/src/main/runtime/runtime-rpc.ts b/src/main/runtime/runtime-rpc.ts
-index 57029a957..428c2b21f 100644
+index 57029a957..92151612e 100644
 --- a/src/main/runtime/runtime-rpc.ts
 +++ b/src/main/runtime/runtime-rpc.ts
 @@ -54,6 +54,10 @@ type OrcaRuntimeRpcServerOptions = {
@@ -268,7 +268,7 @@ index 57029a957..428c2b21f 100644
      this.keepaliveIntervalMs = keepaliveIntervalMs
      this.longPollCap = longPollCap
      this.relayRevokeOutbox = new RelayRevokeOutbox(userDataPath)
-@@ -566,6 +576,15 @@ export class OrcaRuntimeRpcServer {
+@@ -566,6 +576,19 @@ export class OrcaRuntimeRpcServer {
      return ws?.endpoint ?? null
    }
  
@@ -276,7 +276,11 @@ index 57029a957..428c2b21f 100644
 +  private buildTrustedSessionOffer(): string | null {
 +    const offer = this.createPairingOffer({
 +      address: this.trustedProxyAddress,
-+      scope: 'runtime'
++      scope: 'runtime',
++      // Why: without a name these mint as the "CLI <date>" default, so browser
++      // sessions masquerade as command-line clients in the shared-access list.
++      // Named device classes are the upstream convention (Mobile/Runtime <date>).
++      name: `Web session ${new Date().toLocaleDateString()}`
 +    })
 +    return offer.available ? offer.pairingUrl : null
 +  }
@@ -284,7 +288,7 @@ index 57029a957..428c2b21f 100644
    createPairingOffer(args: {
      address?: string | null
      name?: string
-@@ -889,10 +908,15 @@ export class OrcaRuntimeRpcServer {
+@@ -889,10 +912,15 @@ export class OrcaRuntimeRpcServer {
          this.e2eeKeypair = pairingIdentity.e2eeKeypair
          this.pairingInitializationFailure = null
          try {
@@ -301,7 +305,7 @@ index 57029a957..428c2b21f 100644
              // Why: stable fallback port across restarts keeps paired devices' endpoints valid (STA-1511); wsPort 0 = random (E2E).
              ...(this.wsPort !== 0 ? { fallbackPort: readWsFallbackPort(this.userDataPath) } : {}),
              ...(this.preferPinnedWsPort ? { preferPinnedPort: true } : {})
-@@ -955,7 +979,8 @@ export class OrcaRuntimeRpcServer {
+@@ -955,7 +983,8 @@ export class OrcaRuntimeRpcServer {
            activeTransports.push(wsTransport)
            transportsMeta.push({
              kind: 'websocket',

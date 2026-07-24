@@ -261,7 +261,7 @@ index 000000000..4a9fdbc39
 +  })
 +]
 diff --git a/src/main/runtime/runtime-rpc.ts b/src/main/runtime/runtime-rpc.ts
-index 428c2b21f..82484e4da 100644
+index 92151612e..4687d307b 100644
 --- a/src/main/runtime/runtime-rpc.ts
 +++ b/src/main/runtime/runtime-rpc.ts
 @@ -7,7 +7,11 @@ import type { RuntimeMetadata, RuntimeTransportMetadata } from '../../shared/run
@@ -277,7 +277,7 @@ index 428c2b21f..82484e4da 100644
  import { errorResponse } from './rpc/errors'
  import type { RpcMessageContext, RpcTransport } from './rpc/transport'
  import { UnixSocketTransport } from './rpc/unix-socket-transport'
-@@ -721,6 +725,47 @@ export class OrcaRuntimeRpcServer {
+@@ -725,6 +729,47 @@ export class OrcaRuntimeRpcServer {
      }
    }
  
@@ -325,7 +325,7 @@ index 428c2b21f..82484e4da 100644
    private queueRelayDeviceRevoke(binding: RelayDeviceBinding): void {
      const item = this.relayRevokeOutbox.enqueue(binding)
      this.mobileRelayPairingProvider?.onDeviceRevokeQueued(item)
-@@ -1205,6 +1250,10 @@ export class OrcaRuntimeRpcServer {
+@@ -1209,6 +1254,10 @@ export class OrcaRuntimeRpcServer {
          // Why: gates the mobile-only payload diet so full-screen web/desktop clients aren't truncated.
          clientKind: device.scope,
          pairing: pairingContext,

@@ -33,7 +33,10 @@ independent capability gets the next number.
 | `0001-serve-trusted-proxy-web-session.patch` | Orca web UI behind Coder (trusted-proxy session) — §1a |
 | `0002-web-mobile-pairing.patch` | Mobile pairing from the web client through Coder — §1b |
 | `0003-web-runtime-share-links.patch` | Runtime-scope share links from the web client — §1c |
-| `0004-web-session-device-name.patch` | Trusted-session devices named `Web session <date>` (were the `CLI <date>` default) so the shared-access list reads honestly: Web session / Runtime / Mobile |
+
+Naming note: trusted-session devices are named `Web session <date>` (part of 0001 — it fixes
+0001's own mint, which previously leaked the upstream `CLI <date>` default), so the
+shared-access list reads honestly: Web session / Runtime / Mobile.
 
 ### 1a. Patch 0001 — trusted-proxy web session
 
@@ -200,11 +203,14 @@ series applies in filename order on the pristine tag:
 
 | Patch | Exported as |
 |---|---|
-| `0001` (trusted-proxy session) | `git diff v1.4.153 a50eb31b5` |
-| `0002` (web mobile pairing) | `git diff a50eb31b5 e56b5ad5c` |
-| `0003` (web runtime share links) | `git diff e56b5ad5c 1a1d2a4e9` |
-| `0004` (web session device name) | `git diff 1a1d2a4e9 8172807c8` |
-| next capability | `git diff <prev-boundary> <new-commit>` → `0005-….patch` |
+| `0001` (trusted-proxy session, incl. `Web session` device naming) | `git diff v1.4.153 3d65845c6` |
+| `0002` (web mobile pairing) | `git diff 3d65845c6 7c145fb1a` |
+| `0003` (web runtime share links) | `git diff 7c145fb1a c94cca036` |
+| next capability | `git diff <prev-boundary> <new-commit>` → `0004-….patch` |
+
+A fix that belongs to an existing patch's logic is **folded into that patch** (restack the
+fork branch, re-export the series) — never appended as a new number. New numbers are for new
+capabilities only.
 
 ```bash
 cd /Volumes/Devops/Git/Github/mrkhachaturov/orcaide-v2

@@ -169,10 +169,10 @@ index 4a9fdbc39..8727b3dc9 100644
    })
  ]
 diff --git a/src/main/runtime/runtime-rpc.ts b/src/main/runtime/runtime-rpc.ts
-index 82484e4da..155e86654 100644
+index 4687d307b..483dd4a77 100644
 --- a/src/main/runtime/runtime-rpc.ts
 +++ b/src/main/runtime/runtime-rpc.ts
-@@ -762,7 +762,46 @@ export class OrcaRuntimeRpcServer {
+@@ -766,7 +766,46 @@ export class OrcaRuntimeRpcServer {
              lastSeenAt: d.lastSeenAt
            }))
        }),
