@@ -18,11 +18,19 @@
 
 **Remaining** (acceptance criteria below still to be proven live):
 
-1. Commit/push this repo → CI republishes `astraide-v1.4.153` asset → ETag refresh in workspace.
-2. Control-plane template: pass `--pairing-address "https://<app-hostname>/?coder_session_token=${TOKEN}"`
-   (prepared change; deploy is manual — coordinate with operator).
-3. Live verify in CT 100: tile regression (§2 success criteria), then Generate code in the web
-   client, then a real cellular phone scan; token-expiry → Regenerate → rescan.
+1. ~~Commit/push this repo → CI republishes asset~~ **DONE** — asset republished 06:30Z, CI green.
+2. ~~Control-plane template `--pairing-address`~~ **DONE & DEPLOYED** — QR renders in the tile,
+   serve advertises the tokenized wss URL (verified in serve.log).
+3. Live pairing: **BLOCKED ON PUBLIC EDGE, not on this patch.** Verified 2026-07-24: the full
+   chain works over the internal path (10.1.125.235) — Coder query-param auth 200, real WS
+   client upgrade OPEN, Orca accepts. But the public edge `zt.astrateam.net` (5.42.122.90),
+   which phones hit via public DNS (cellular, and Wi-Fi under iCloud Private Relay/DoH),
+   terminates TLS with a `*.astrateam.net` cert that does NOT cover `*.portal.astrateam.net`
+   (one-level wildcard) → iOS closes the socket instantly ("WebSocket closed" loop).
+   **Fix in control-plane**: give the zt edge a `*.portal.astrateam.net` cert (or SNI
+   passthrough to the internal Traefik) + route those hosts to Coder with WS upgrades.
+   Then rescan on cellular. Phone device credential verified healthy in orca-devices.json
+   (pending mobile entry matches the QR token).
 
 ## Mission
 
