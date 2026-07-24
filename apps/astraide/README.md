@@ -58,17 +58,26 @@ runtime traffic.
 ## Launch (Coder module — authored separately, not in this repo)
 
 ```bash
-./astraide-<VERSION>-x86_64.AppImage serve --trusted-proxy --port "$PORT" &
+# An LXC has no FUSE → extract, then run the inner AppRun.
+./astraide-<VERSION>-x86_64.AppImage --appimage-extract        # → squashfs-root/
+# serve is Electron: a D-Bus session + virtual X display, and no Chromium sandbox in the LXC.
+LIBGL_ALWAYS_SOFTWARE=1 dbus-run-session -- xvfb-run -a \
+  squashfs-root/AppRun --no-sandbox serve --trusted-proxy --port "$PORT" &
 ```
 
 - **No `--pairing-address`** — same-origin handles it.
-- `--no-sandbox` is auto-added by the AppImage's `AppRun` when user namespaces are unavailable
-  (unprivileged LXC); it need not be passed.
+- **`dbus-run-session -- xvfb-run -a`.** serve is Electron and needs an X server + session bus;
+  it does **not** auto-start Xvfb (it dies "Missing X server or $DISPLAY"). This matches upstream's
+  own headless harness (`config/docker/headless-pairing/run-appimage-case.sh`).
+- **`--no-sandbox` is passed explicitly.** AppRun only auto-adds it when `unshare -Ur` *fails*
+  (user namespaces unavailable); a **nesting-enabled** LXC has userns, so it is not auto-added and
+  Chromium's sandbox would crash. It forwards ahead of `serve`.
+- **Electron system deps** (this is Electron, not Node): the Chromium shared libs
+  (`libgtk-3-0`, `libnss3`, `libgbm1`, `libasound2`, `libatk-bridge2.0-0`, `libxkbcommon0`, …)
+  **plus `xvfb`, `xauth`, `dbus-x11`** (`xvfb-run` shells out to `xauth`; `dbus-run-session` comes
+  from `dbus-x11`). `apt-get` them in the install script or bake them into the workspace image.
 - **`coder_app` healthcheck → `/web-index.html`** (200). Not `/trusted-session` (loopback-gated,
   503 until pairing init).
-- **Electron system deps.** This is Electron, not Node: the workspace needs the Chromium shared
-  libs (`libgtk-3-0`, `libnss3`, `libgbm1`, `libasound2`, …) + `Xvfb`. `serve` auto-starts Xvfb,
-  but the libs must be present (install-script `apt-get` or baked into the workspace image).
 
 ## Version
 
