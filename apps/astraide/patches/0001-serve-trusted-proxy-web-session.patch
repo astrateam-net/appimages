@@ -299,7 +299,7 @@ index 57029a957..811a5ba43 100644
              ...(this.wsPort !== 0 ? { fallbackPort: readWsFallbackPort(this.userDataPath) } : {}),
              ...(this.preferPinnedWsPort ? { preferPinnedPort: true } : {})
 diff --git a/src/renderer/src/web/main.tsx b/src/renderer/src/web/main.tsx
-index eae3a54c8..e56dbe241 100644
+index eae3a54c8..163887cf6 100644
 --- a/src/renderer/src/web/main.tsx
 +++ b/src/renderer/src/web/main.tsx
 @@ -1,6 +1,6 @@
@@ -310,16 +310,19 @@ index eae3a54c8..e56dbe241 100644
  import { lazyWithRetry as lazy } from '@/lib/lazy-with-retry'
  import ReactDOM from 'react-dom/client'
  import { useTranslation } from 'react-i18next'
-@@ -9,6 +9,8 @@ import { RecoverableRenderErrorBoundary } from '../components/error-boundaries/R
+@@ -9,7 +9,10 @@ import { RecoverableRenderErrorBoundary } from '../components/error-boundaries/R
  import {
    clearPairingInputFromAddressBar,
    decideWebPairingStartup,
+-  readPairingInputFromLocation
 +  fetchTrustedSessionPairingInput,
 +  parseWebPairingInput,
-   readPairingInputFromLocation
++  readPairingInputFromLocation,
++  sameOriginWebSocketEndpoint
  } from './web-pairing'
  import {
-@@ -52,6 +54,47 @@ function WebRoot(): React.JSX.Element {
+   createStoredWebRuntimeEnvironment,
+@@ -52,6 +55,50 @@ function WebRoot(): React.JSX.Element {
      }
      return startupDecision.kind === 'use-stored-environment'
    })
@@ -348,7 +351,10 @@ index eae3a54c8..e56dbe241 100644
 +        saveStoredWebRuntimeEnvironment(
 +          createStoredWebRuntimeEnvironment({
 +            name: 'Orca Server',
-+            offer,
++            // Why: keep the server's E2EE credential but dial same-origin — the browser
++            // loaded from the correct Coder subdomain, so window.location is the reachable
++            // address for any workspace name, with no --pairing-address to misconfigure.
++            offer: { ...offer, endpoint: sameOriginWebSocketEndpoint(window.location) },
 +            previousEnvironment: readStoredWebRuntimeEnvironment()
 +          })
 +        )
@@ -368,10 +374,10 @@ index eae3a54c8..e56dbe241 100644
    if (!hasEnvironment) {
      return (
 diff --git a/src/renderer/src/web/web-pairing.ts b/src/renderer/src/web/web-pairing.ts
-index f29465cc8..aec809590 100644
+index f29465cc8..5382254b1 100644
 --- a/src/renderer/src/web/web-pairing.ts
 +++ b/src/renderer/src/web/web-pairing.ts
-@@ -74,6 +74,23 @@ export function decideWebPairingStartup(args: {
+@@ -74,6 +74,36 @@ export function decideWebPairingStartup(args: {
      : { kind: 'show-connect', initialPairingInput: null }
  }
  
@@ -390,6 +396,19 @@ index f29465cc8..aec809590 100644
 +  } catch {
 +    return null
 +  }
++}
++
++// Why: code-server's proven reverse-proxy rule — the client, not the server, knows the
++// reachable base. A Coder subdomain is `<app>--<workspace>--<owner>.<domain>`, dynamic per
++// workspace name, so the loopback-bound runtime can't advertise it. But the browser already
++// loaded from it: window.location IS the address. In trusted mode keep the offer's E2EE
++// credential (server-authoritative) but dial its endpoint same-origin, so the web client
++// connects back exactly where it loaded from — any workspace name, no --pairing-address needed
++// (the page's directory preserves a reverse-proxy path prefix, mirroring code-server's relativeRoot).
++export function sameOriginWebSocketEndpoint(location: Location): string {
++  const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:'
++  const basePath = location.pathname.replace(/\/[^/]*$/, '/')
++  return `${protocol}//${location.host}${basePath}`
 +}
 +
  export function clearPairingInputFromAddressBar(): void {
