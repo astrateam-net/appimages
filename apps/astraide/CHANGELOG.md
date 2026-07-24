@@ -22,27 +22,42 @@ throw-on-call. Most "works on desktop, dead in the tile" reports are one of thos
 `patches/0006-web-floating-workspace-dir-picker.patch`
 
 **Symptom:** in the web tile, Settings → Floating Workspace → **Terminal Directory**'s
-folder button did nothing — no picker, no error. (Same class as the pet Import/Upload
-buttons, which are a separate follow-up.)
+folder button did nothing — no picker, no error — and no directory could be applied. (Same
+native-dialog class as the pet Import/Upload buttons, a separate follow-up.)
 
-**Cause:** the button called `window.api.app.pickFloatingWorkspaceDirectory()`, a **native
-OS file dialog**. A headless browser tile has no desktop dialog, so `web-preload-api.ts`
-stubs it to `() => Promise.resolve(null)` → the click resolves to nothing. But the floating
-terminals run on the connected **server** (the workspace host), where the directory must
-actually resolve — the same host the "Add a project → Browse folder" flow already lists.
+**Cause:** the desktop feature is a **three-part host operation**, and the web client had a
+path for none of them. (1) The button calls `window.api.app.pickFloatingWorkspaceDirectory()`,
+a **native OS dialog** — stubbed to `Promise.resolve(null)` in the browser. (2) The native
+picker also **grants trust** — `grantFloatingWorkspaceDirectory` authorizes the directory and
+records it in `floatingTerminalTrustedCwds`. (3) Both the settings input and the floating
+terminal read the cwd through `getFloatingTerminalCwd` → `resolveFloatingTerminalCwd`, which
+expands `~`, canonicalizes, and **only returns a custom path when it's trusted** — else falls
+back to the default app workspace. In the web client `getFloatingTerminalCwd` was stubbed to
+`''`. So even a saved path was neither trusted, resolved, nor displayed. The tile's floating
+terminals run on the connected **server**, so all three must happen on the workspace host.
 
-**Fix:**
-- On the web tile with an active runtime environment, the button opens the existing
-  `RemoteFileBrowser` (directory mode) instead of the native dialog — the same component and
-  RPC path (`browseRuntimeServerDirectory` → `files.browseServerDir`) that "Add a project"
-  uses — so the folder is chosen **on the server host** and written to `floatingTerminalCwd`.
-- Gated on `settings.activeRuntimeEnvironmentId` via a pure `shouldUseServerDirectoryBrowser`
-  helper; with no environment connected there's nothing to browse, so it falls back to the
-  native picker. **Desktop is unchanged.**
-- **No new RPC and no allowlist change** — reuses the already web-reachable
-  `files.browseServerDir`, so nothing new touches `MOBILE_RPC_METHOD_ALLOWLIST`.
+**Fix — wire the whole contract over runtime RPC:**
+- Two runtime methods `floatingWorkspace.resolveCwd` / `grantDirectory` reuse the existing
+  `ipc/floating-workspace-directory.ts` helpers via a minimal `FloatingWorkspaceDirectoryStore`
+  adapter over the runtime's settings store (the desktop `Store` stays structurally
+  assignable — its callers are untouched).
+- Both **mutate/authorize host state**, so — exactly like `cli.*` (0005) — they stay **out of**
+  `MOBILE_RPC_METHOD_ALLOWLIST`: a paired phone must never resolve or trust host directories.
+  Test-enforced (not-allowlisted + registered).
+- `app.grantFloatingWorkspaceDirectory` added to the preload contract (desktop IPC handler +
+  web routing) so a browser-picked directory records the **same grant** the native picker does.
+- Web client: Terminal Directory opens the existing `RemoteFileBrowser` (`files.browseServerDir`,
+  the "Add a project → Browse folder" path); `onSelect` **grants then stores**;
+  `getFloatingTerminalCwd` routes to `resolveCwd` so both the input **and** the terminal cwd
+  resolve on the host. Gated on `settings.activeRuntimeEnvironmentId` (pure
+  `shouldUseServerDirectoryBrowser` helper) — with no environment, it falls back to the native
+  no-op. **Desktop is unchanged.**
 
-Touch points: `renderer/src/components/settings/FloatingWorkspacePane.tsx` (+ `.test.tsx`).
+Touch points: `main/runtime/rpc/methods/floating-workspace.ts` (+ `.test.ts`), `rpc/methods/index.ts`,
+`main/runtime/orca-runtime.ts`, `main/ipc/floating-workspace-directory.ts`, `main/ipc/app.ts`,
+`preload/{api-types,index}.ts`, `web/web-preload-api.ts`,
+`renderer/src/components/settings/FloatingWorkspacePane.tsx` (+ `.test.tsx`),
+`main/runtime/mobile-rpc-allowlist.test.ts`.
 
 ## 0005 — web-client agent-skill CLI registration
 

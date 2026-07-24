@@ -24,7 +24,7 @@ Each patch = diff between consecutive feature-boundary commits on the fork branc
 | 0003 web runtime share links | `7c145fb1a → c94cca036` |
 | 0004 web resource manager | `c94cca036 → 6375c2bf2` |
 | 0005 web CLI registration | `6375c2bf2 → a50a20da2` |
-| 0006 web floating-workspace dir picker | `a50a20da2 → b14f41aa0` |
+| 0006 web floating-workspace dir picker | `a50a20da2 → 6c55cf070` |
 | next | `<prev-boundary> → <new-commit>` → `0007-…` |
 
 ## Diagnose (the usual bug: a web-client stub)
