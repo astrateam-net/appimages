@@ -33,6 +33,7 @@ independent capability gets the next number.
 | `0001-serve-trusted-proxy-web-session.patch` | Orca web UI behind Coder (trusted-proxy session) — §1a |
 | `0002-web-mobile-pairing.patch` | Mobile pairing from the web client through Coder — §1b |
 | `0003-web-runtime-share-links.patch` | Runtime-scope share links from the web client — §1c |
+| `0004-web-resource-manager.patch` | Resource Manager in the web client shows the WORKSPACE's processes + host RAM/CPU (web preload `memory.getSnapshot` → runtime `diagnostics.memory`; was an empty-snapshot stub) |
 
 Naming note: trusted-session devices are named `Web session <date>` (part of 0001 — it fixes
 0001's own mint, which previously leaked the upstream `CLI <date>` default), so the
@@ -206,7 +207,8 @@ series applies in filename order on the pristine tag:
 | `0001` (trusted-proxy session, incl. `Web session` device naming) | `git diff v1.4.153 3d65845c6` |
 | `0002` (web mobile pairing) | `git diff 3d65845c6 7c145fb1a` |
 | `0003` (web runtime share links) | `git diff 7c145fb1a c94cca036` |
-| next capability | `git diff <prev-boundary> <new-commit>` → `0004-….patch` |
+| `0004` (web resource manager) | `git diff c94cca036 6375c2bf2` |
+| next capability | `git diff <prev-boundary> <new-commit>` → `0005-….patch` |
 
 A fix that belongs to an existing patch's logic is **folded into that patch** (restack the
 fork branch, re-export the series) — never appended as a new number. New numbers are for new
