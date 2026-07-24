@@ -61,17 +61,19 @@ runtime traffic.
 # An LXC has no FUSE → extract, then run the inner AppRun.
 ./astraide-<VERSION>-x86_64.AppImage --appimage-extract        # → squashfs-root/
 # serve is Electron: a D-Bus session + virtual X display, and no Chromium sandbox in the LXC.
-LIBGL_ALWAYS_SOFTWARE=1 dbus-run-session -- xvfb-run -a \
-  squashfs-root/AppRun --no-sandbox serve --trusted-proxy --port "$PORT" &
+LIBGL_ALWAYS_SOFTWARE=1 ORCA_APPIMAGE_NO_SANDBOX=1 dbus-run-session -- xvfb-run -a \
+  squashfs-root/AppRun serve --trusted-proxy --port "$PORT" &
 ```
 
 - **No `--pairing-address`** — same-origin handles it.
 - **`dbus-run-session -- xvfb-run -a`.** serve is Electron and needs an X server + session bus;
   it does **not** auto-start Xvfb (it dies "Missing X server or $DISPLAY"). This matches upstream's
   own headless harness (`config/docker/headless-pairing/run-appimage-case.sh`).
-- **`--no-sandbox` is passed explicitly.** AppRun only auto-adds it when `unshare -Ur` *fails*
-  (user namespaces unavailable); a **nesting-enabled** LXC has userns, so it is not auto-added and
-  Chromium's sandbox would crash. It forwards ahead of `serve`.
+- **Sandbox off via `ORCA_APPIMAGE_NO_SANDBOX=1`** (env), **not** a `--no-sandbox` flag. It's Orca's
+  own knob — `serveOrcaApp` injects `--no-sandbox` into the serve child (`src/cli/runtime/launch.ts`).
+  Passing `--no-sandbox` to `serve` directly is rejected by the CLI ("Unknown flag", not in serve's
+  `allowedFlags`) and serve never starts. A nesting-enabled LXC has userns, so AppRun won't auto-add
+  it — hence the env var.
 - **Electron system deps** (this is Electron, not Node): the Chromium shared libs
   (`libgtk-3-0`, `libnss3`, `libgbm1`, `libasound2`, `libatk-bridge2.0-0`, `libxkbcommon0`, …)
   **plus `xvfb`, `xauth`, `dbus-x11`** (`xvfb-run` shells out to `xauth`; `dbus-run-session` comes
