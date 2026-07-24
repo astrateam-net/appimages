@@ -31,11 +31,22 @@
    `lastSeenAt 06:54:50`. Tile regression clean after everything: loopback-only bind,
    `/web-index.html` 200, `/trusted-session` 200.
 
-Still worth a pass before deleting this handoff: phone survival across a workspace
-restart + regenerate-after-Coder-token-expiry, and a self-service revoke from the web
-Settings → Mobile pane. Security note: one pairing code (device token + Coder session
-token) was pasted into an agent chat during debugging — self-service revoke + re-pair
-rotates the device credential; the Coder token rotates on the next workspace build.
+**Restart survival: FAILED first test, fix prepared (control-plane).** Verified live:
+`data.coder_workspace_owner.me.session_token` is **revoked on every rebuild** (old token →
+303, serve advertises a new one), so a QR carrying it dies on workspace restart — the UI
+shows the phone as paired (registry persists) while the phone loops reconnecting. Fix in
+`install-astraide.sh` (prepared, awaiting template plan/apply): mint a **durable
+`application_connect`-scoped owner token once** via `POST /api/v2/users/me/keys/tokens`
+(bootstrap = the per-build token; lifetime 30d → 7d fallback), cache it 0600 in the module
+dir, validate each start via `GET /api/v2/users/me`, rebuild the pairing address from it,
+and kill/relaunch serve when the advertised address changes. After deploying: ONE
+Regenerate + rescan (QR must pick up the durable token), then restarts survive; re-pair is
+only needed when the durable token expires.
+
+Also still worth a pass: self-service revoke from the web Settings → Mobile pane. Security
+note: one pairing code (device token + Coder session token) was pasted into an agent chat
+during debugging — self-service revoke + re-pair rotates the device credential; that Coder
+session token is already dead (revoked by the restart).
 
 ## Mission
 
