@@ -1,0 +1,11 @@
+# Host toolchain. The AppImage itself is built in a hermetic Docker sandbox
+# (apps/*/Dockerfile), so the host needs only light tooling: jq parses the
+# `docker buildx bake --print` output to derive the release tag from VERSION.
+# jdx/mise-action provisions the same set in CI.
+min_version = "2026.7.11"
+
+[tools]
+jq = "1.8.2" # latest at pin time; bump with `mise up --bump`
+
+[hooks]
+enter = ["mise install"]

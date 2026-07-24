@@ -1,0 +1,67 @@
+---
+# yaml-language-server: $schema=https://json.schemastore.org/github-workflow.json
+name: App Builder
+
+# Reusable worker: builds one app's patched AppImage in a hermetic Docker
+# sandbox, exports the .AppImage, and (when release=true) publishes it as a
+# GitHub Release asset tagged <app>-<version>. Called by release.yaml (main)
+# and pull-request.yaml (PR, release=false).
+on:
+  workflow_call:
+    inputs:
+      app:
+        description: Application name
+        type: string
+        required: true
+      release:
+        description: Publish a GitHub Release
+        type: boolean
+        required: false
+        default: false
+
+jobs:
+  build:
+    name: Build ${{ inputs.app }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # Pinned host toolchain (jq) — used by app-options to read the bake vars.
+      - name: Setup mise
+        uses: jdx/mise-action@dad1bfd3df957f44999b559dd69dc1671cb4e9ea # v4.2.1
+
+      - name: Setup Buildx
+        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+
+      - name: Application Options
+        id: options
+        uses: ./.github/actions/app-options
+        with:
+          app: ${{ inputs.app }}
+
+      # Build the patched app and export the .AppImage to ./dist. Absolute dest
+      # keeps the artifact path deterministic regardless of bake's context root.
+      - name: Build AppImage
+        uses: docker/bake-action@d3418bd7d0e9324001bca92fa8ba175ea7e6dc9b # v7.3.0
+        with:
+          source: ./apps/${{ inputs.app }}
+          files: ./docker-bake.hcl
+          targets: appimage
+          set: |
+            *.output=type=local,dest=${{ github.workspace }}/dist
+
+      - name: List artifacts
+        run: ls -l dist/
+
+      - name: Release
+        if: ${{ inputs.release }}
+        uses: ncipollo/release-action@339a81892b84b4eeb0f6e744e4574d79d0d9b8dd # v1.21.0
+        with:
+          tag: ${{ inputs.app }}-${{ steps.options.outputs.version }}
+          name: ${{ inputs.app }} ${{ steps.options.outputs.version }}
+          artifacts: dist/*.AppImage
+          allowUpdates: true
+          makeLatest: true
+          body: |
+            Patched AppImage built from `${{ steps.options.outputs.source }}@${{ steps.options.outputs.version }}`.

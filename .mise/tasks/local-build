@@ -1,0 +1,59 @@
+#!/usr/bin/env bash
+#MISE description="Build an app's AppImage locally via Docker Buildx and validate it"
+#MISE dir="{{config_root}}"
+#USAGE arg "<app>" help="App directory under apps/"
+#USAGE complete "app" run="ls -d apps/*/ | xargs -n1 basename"
+#USAGE flag "--smoke" help="Also extract the AppImage in a linux/amd64 container (verifies it's not corrupt)"
+set -euo pipefail
+
+app="${usage_app:?}"
+cd "apps/${app}"
+
+for f in docker-bake.hcl Dockerfile; do
+  [[ -f "$f" ]] || { echo "ERROR: missing apps/${app}/$f" >&2; exit 1; }
+done
+command -v docker >/dev/null || { echo "ERROR: docker not found in PATH" >&2; exit 1; }
+
+# The target is linux/amd64 by design (Orca is amd64-only). On an arm64 host the
+# whole Electron build runs under qemu emulation — slow. CI (native amd64) is the
+# fast path; this is for pre-push validation when you want it locally.
+if [[ "$(uname -m)" == arm64 || "$(uname -m)" == aarch64 ]]; then
+  echo "NOTE: building linux/amd64 under emulation on an arm64 host — this is slow." >&2
+fi
+
+# Build + export the .AppImage to ./dist (the bake target sets type=local,dest=./dist).
+rm -rf dist
+docker buildx bake appimage
+
+# Locate exactly one artifact.
+shopt -s nullglob
+files=(dist/*.AppImage)
+(( ${#files[@]} == 1 )) || { echo "ERROR: expected one .AppImage in dist/, got ${#files[@]}" >&2; exit 1; }
+img="${files[0]}"
+echo "Built: ${img} ($(du -h "${img}" | cut -f1))"
+
+# Structural validation — host-portable, no linux exec needed.
+[[ -s "${img}" ]] || { echo "ERROR: AppImage is empty" >&2; exit 1; }
+[[ -x "${img}" ]] || { echo "ERROR: AppImage is not executable" >&2; exit 1; }
+elf="$(dd if="${img}" bs=1 count=4 2>/dev/null | od -An -tx1 | tr -d ' \n')"
+[[ "${elf}" == "7f454c46" ]] || { echo "ERROR: not an ELF (magic=${elf})" >&2; exit 1; }
+# Type-2 AppImage marker (0x41 0x49 0x02 at offset 8) — informational: the static
+# runtime should carry it, but the ELF + extract checks are the load-bearing ones.
+ai="$(dd if="${img}" bs=1 skip=8 count=3 2>/dev/null | od -An -tx1 | tr -d ' \n')"
+[[ "${ai}" == "414902" ]] && echo "OK: type-2 AppImage magic present" || echo "WARN: type-2 magic not found (ai=${ai})"
+echo "OK: ELF, non-empty, executable"
+
+# Functional smoke test: extract the squashfs in a linux/amd64 container and assert
+# the AppRun launcher is present — proves the image isn't corrupt. FUSE-free.
+if [[ "${usage_smoke:-}" == "true" ]]; then
+  echo "Smoke: extracting in a linux/amd64 container..."
+  docker run --rm --platform linux/amd64 -v "${PWD}/dist:/d:ro" -w /tmp ubuntu:24.04 bash -c '
+    set -e
+    cp /d/*.AppImage app.AppImage && chmod +x app.AppImage
+    ./app.AppImage --appimage-extract >/dev/null
+    test -x squashfs-root/AppRun
+    echo "OK: AppImage extracts and contains AppRun"
+  '
+fi
+
+echo "local-build OK: ${app}"

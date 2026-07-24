@@ -1,0 +1,5 @@
+# Gitignored reference clones — study upstreams here, never a build input.
+.upstream/
+
+# AppImage build export dir (buildx --output type=local)
+dist/

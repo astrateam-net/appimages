@@ -1,0 +1,33 @@
+---
+# yaml-language-server: $schema=https://json.schemastore.org/github-action.json
+name: Application Options
+description: Return VERSION and SOURCE from an app's docker-bake.hcl
+
+inputs:
+  app:
+    description: Application Name
+    required: true
+
+outputs:
+  version:
+    description: Upstream version
+    value: ${{ steps.options.outputs.version }}
+  source:
+    description: Source URL
+    value: ${{ steps.options.outputs.source }}
+
+runs:
+  using: composite
+  steps:
+    - name: Application Options
+      id: options
+      shell: bash
+      working-directory: ./apps/${{ inputs.app }}
+      run: |
+        VERSION=$(docker buildx bake --list type=variables,format=json --progress=quiet \
+          | jq --raw-output '.[] | select(.name == "VERSION") | .value')
+        SOURCE=$(docker buildx bake --list type=variables,format=json --progress=quiet \
+          | jq --raw-output '.[] | select(.name == "SOURCE") | .value')
+        test -n "$VERSION" && test "$VERSION" != "null"
+        echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+        echo "source=${SOURCE}" >> "$GITHUB_OUTPUT"

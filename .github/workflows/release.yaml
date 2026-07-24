@@ -1,0 +1,67 @@
+---
+# yaml-language-server: $schema=https://json.schemastore.org/github-workflow.json
+name: Release
+
+# Thin orchestrator: detect which apps changed on main (or one from dispatch),
+# then fan out to the reusable app-builder, publishing a Release per app.
+on:
+  push:
+    branches: ["main"]
+    paths: ["apps/**"]
+  workflow_dispatch:
+    inputs:
+      app:
+        type: string
+        description: Application name
+        required: true
+        default: astraide
+
+jobs:
+  prepare:
+    name: Prepare
+    runs-on: ubuntu-latest
+    outputs:
+      changed-files: ${{ steps.changed-files.outputs.changed_files }}
+    steps:
+      - name: Get Changed Files
+        id: changed-files
+        uses: bjw-s-labs/action-changed-files@a9a36fb08ce06db9b02fbd8026cc2c0945eb9841 # v0.6.0
+        with:
+          path: apps
+          include_only_directories: true
+          max_depth: 1
+
+  changed:
+    if: ${{ needs.prepare.outputs.changed-files != '[]' || github.event_name == 'workflow_dispatch' }}
+    needs: ["prepare"]
+    name: Get Changed Apps
+    runs-on: ubuntu-latest
+    outputs:
+      apps: ${{ steps.apps.outputs.apps }}
+    steps:
+      - name: Get Apps
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        id: apps
+        env:
+          APPS: ${{ github.event_name == 'workflow_dispatch' && inputs.app || join(fromJSON(needs.prepare.outputs.changed-files), ' ') }}
+        with:
+          script: |
+            const { APPS } = process.env;
+            const appsToBuild = APPS.split(' ').filter(Boolean);
+            core.setOutput('apps', JSON.stringify(appsToBuild));
+            core.summary.addHeading('Apps to build:').addList(appsToBuild).write();
+
+  build:
+    if: ${{ needs.changed.outputs.apps != '[]' }}
+    needs: ["changed"]
+    name: Build
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        app: ${{ fromJSON(needs.changed.outputs.apps) }}
+    uses: ./.github/workflows/app-builder.yaml
+    with:
+      app: ${{ matrix.app }}
+      release: true
