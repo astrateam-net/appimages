@@ -15,18 +15,24 @@ Operator-relative paths: `<fork>` = your `mrkhachaturov/orcaide` clone (branch
 cd <fork>
 mise x pnpm@10.24.0 -- pnpm install --ignore-scripts --prefer-offline   # mise has no pnpm pinned
 mise x pnpm@10.24.0 -- pnpm run typecheck:tsc                           # must be clean
-mise x pnpm@10.24.0 -- pnpm exec vitest run \
+mise x pnpm@10.24.0 -- pnpm exec vitest run --config config/vitest.config.ts \
   src/renderer/src/web/web-runtime-client.test.ts \
   src/renderer/src/web/web-pairing.test.ts \
   src/cli/runtime/launch.test.ts src/cli/args.test.ts \
   src/main/runtime/rpc/methods/mobile-pairing.test.ts \
   src/main/runtime/rpc/methods/pairing.test.ts \
   src/main/runtime/rpc/methods/cli.test.ts \
-  src/main/runtime/mobile-rpc-allowlist.test.ts                         # all green
+  src/main/runtime/mobile-rpc-allowlist.test.ts \
+  <any test files your patch touched>                                   # all green
 ```
 
-Pre-existing failures to IGNORE (env `@/`-alias quirk, not the patch): `web-preload-api.test.ts`
-and `agent-skill-cli-prerequisite.test.ts` fail to load — identical with/without changes.
+**Always pass `--config config/vitest.config.ts`.** It's the only config that maps the `@/`
+alias; there is no root config, so a bare `vitest run` (or one you forgot the flag on) fails to
+load every file that imports `@/…` — renderer-component tests especially (`../ui/button` →
+`@/lib/utils`). Widen the run without the flag and you get a fake mass regression (~380 files,
+`Cannot find package '@/...'`), NOT a real failure. With the flag, only these two still fail to
+load and are safe to IGNORE (pre-existing, identical with/without your change):
+`web-preload-api.test.ts`, `agent-skill-cli-prerequisite.test.ts`.
 
 ## 2. Whole series applies on pristine (same mechanism as the Dockerfile)
 

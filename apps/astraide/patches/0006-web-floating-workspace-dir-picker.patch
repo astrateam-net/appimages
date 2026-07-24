@@ -1,0 +1,162 @@
+diff --git a/src/renderer/src/components/settings/FloatingWorkspacePane.test.tsx b/src/renderer/src/components/settings/FloatingWorkspacePane.test.tsx
+index 529c0425d..207a97490 100644
+--- a/src/renderer/src/components/settings/FloatingWorkspacePane.test.tsx
++++ b/src/renderer/src/components/settings/FloatingWorkspacePane.test.tsx
+@@ -1,5 +1,8 @@
+ import { describe, expect, it } from 'vitest'
+-import { getFloatingWorkspaceDirectoryInputValue } from './FloatingWorkspacePane'
++import {
++  getFloatingWorkspaceDirectoryInputValue,
++  shouldUseServerDirectoryBrowser
++} from './FloatingWorkspacePane'
+ 
+ describe('getFloatingWorkspaceDirectoryInputValue', () => {
+   it('shows home shorthand for the default terminal directory', () => {
+@@ -29,3 +32,30 @@ describe('getFloatingWorkspaceDirectoryInputValue', () => {
+     ).toBe('/Users/example/notes')
+   })
+ })
++
++describe('shouldUseServerDirectoryBrowser', () => {
++  it('browses the server host in the web tile when an environment is connected', () => {
++    // Why: the web tile has no native OS dialog — pick the directory on the
++    // connected Orca server via the host-fs browser instead.
++    expect(
++      shouldUseServerDirectoryBrowser({ isWebClient: true, activeRuntimeEnvironmentId: 'env-1' })
++    ).toBe(true)
++  })
++
++  it('keeps the native picker on the desktop app', () => {
++    expect(
++      shouldUseServerDirectoryBrowser({ isWebClient: false, activeRuntimeEnvironmentId: 'env-1' })
++    ).toBe(false)
++  })
++
++  it('falls back to the native picker in the web tile with no environment to browse', () => {
++    // Why: RemoteFileBrowser needs a runtime environment id; without one there is
++    // no host to list, so the button must not open an empty browser.
++    expect(
++      shouldUseServerDirectoryBrowser({ isWebClient: true, activeRuntimeEnvironmentId: null })
++    ).toBe(false)
++    expect(
++      shouldUseServerDirectoryBrowser({ isWebClient: true, activeRuntimeEnvironmentId: '   ' })
++    ).toBe(false)
++  })
++})
+diff --git a/src/renderer/src/components/settings/FloatingWorkspacePane.tsx b/src/renderer/src/components/settings/FloatingWorkspacePane.tsx
+index acffb2d00..0e3687896 100644
+--- a/src/renderer/src/components/settings/FloatingWorkspacePane.tsx
++++ b/src/renderer/src/components/settings/FloatingWorkspacePane.tsx
+@@ -4,11 +4,14 @@ import type { FloatingTerminalTriggerLocation, GlobalSettings } from '../../../.
+ import { Button } from '../ui/button'
+ import { Input } from '../ui/input'
+ import { ToggleGroup, ToggleGroupItem } from '../ui/toggle-group'
++import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '../ui/dialog'
++import { RemoteFileBrowser } from '../sidebar/RemoteFileBrowser'
+ import { SearchableSetting } from './SearchableSetting'
+ import { SettingsRow, SettingsSwitchRow } from './SettingsFormControls'
+ import { getFloatingWorkspaceSearchEntries } from './floating-workspace-search'
+ import { matchesSettingsSearch } from './settings-search'
+ import { useAppStore } from '../../store'
++import { isWebClientLocation } from '@/lib/web-client-location'
+ import { translate } from '@/i18n/i18n'
+ 
+ type FloatingWorkspacePaneProps = {
+@@ -30,12 +33,34 @@ export function getFloatingWorkspaceDirectoryInputValue({
+   return resolvedFloatingWorkspacePath
+ }
+ 
++// Why: the web tile has no native OS file dialog, and its floating terminals run
++// on the Orca server (the workspace host) — so a start directory must be chosen
++// ON that host. When an environment is connected, route the picker through the
++// same host-fs browser the "Add a project" flow uses (`files.browseServerDir`
++// RPC) instead of the stubbed native dialog. Desktop keeps its native picker.
++export function shouldUseServerDirectoryBrowser({
++  isWebClient,
++  activeRuntimeEnvironmentId
++}: {
++  isWebClient: boolean
++  activeRuntimeEnvironmentId: string | null | undefined
++}): boolean {
++  return isWebClient && Boolean(activeRuntimeEnvironmentId?.trim())
++}
++
+ export function FloatingWorkspacePane({
+   settings,
+   updateSettings
+ }: FloatingWorkspacePaneProps): React.JSX.Element | null {
+   const searchQuery = useAppStore((state) => state.settingsSearchQuery)
+   const [resolvedFloatingWorkspacePath, setResolvedFloatingWorkspacePath] = useState('')
++  const [browsing, setBrowsing] = useState(false)
++
++  const activeRuntimeEnvironmentId = settings.activeRuntimeEnvironmentId?.trim() || null
++  const useServerDirectoryBrowser = shouldUseServerDirectoryBrowser({
++    isWebClient: isWebClientLocation(),
++    activeRuntimeEnvironmentId
++  })
+ 
+   useEffect(() => {
+     let cancelled = false
+@@ -58,13 +83,23 @@ export function FloatingWorkspacePane({
+     }
+   }, [settings.floatingTerminalCwd])
+ 
++  const applyPickedDirectory = (path: string): void => {
++    useAppStore.getState().recordFeatureInteraction('floating-workspace')
++    updateSettings({ floatingTerminalCwd: path })
++  }
++
+   const pickFloatingWorkspaceDirectory = async (): Promise<void> => {
++    // Why: on the web tile the native picker is a no-op stub, so open the host-fs
++    // browser instead and let the directory be chosen on the connected server.
++    if (useServerDirectoryBrowser) {
++      setBrowsing(true)
++      return
++    }
+     const path = await window.api.app.pickFloatingWorkspaceDirectory()
+     if (!path) {
+       return
+     }
+-    useAppStore.getState().recordFeatureInteraction('floating-workspace')
+-    updateSettings({ floatingTerminalCwd: path })
++    applyPickedDirectory(path)
+   }
+ 
+   const directoryInputValue = getFloatingWorkspaceDirectoryInputValue({
+@@ -195,6 +230,36 @@ export function FloatingWorkspacePane({
+           }
+         />
+       </SearchableSetting>
++
++      {useServerDirectoryBrowser && activeRuntimeEnvironmentId ? (
++        <Dialog open={browsing} onOpenChange={setBrowsing}>
++          <DialogContent className="max-w-lg">
++            <DialogHeader>
++              <DialogTitle>
++                {translate(
++                  'auto.components.sidebar.AddRepoServerStartStep.ac66a3ed2d',
++                  'Browse host filesystem'
++                )}
++              </DialogTitle>
++              <DialogDescription>
++                {translate(
++                  'auto.components.sidebar.AddRepoServerStartStep.0f8aba944c',
++                  'Navigate to a directory and click Select to choose it.'
++                )}
++              </DialogDescription>
++            </DialogHeader>
++            <RemoteFileBrowser
++              runtimeEnvironmentId={activeRuntimeEnvironmentId}
++              initialPath={settings.floatingTerminalCwd?.trim() || '~'}
++              onSelect={(path) => {
++                applyPickedDirectory(path)
++                setBrowsing(false)
++              }}
++              onCancel={() => setBrowsing(false)}
++            />
++          </DialogContent>
++        </Dialog>
++      ) : null}
+     </section>
+   )
+ }

@@ -17,6 +17,33 @@ throw-on-call. Most "works on desktop, dead in the tile" reports are one of thos
 
 ---
 
+## 0006 — web-client floating-workspace directory picker
+
+`patches/0006-web-floating-workspace-dir-picker.patch`
+
+**Symptom:** in the web tile, Settings → Floating Workspace → **Terminal Directory**'s
+folder button did nothing — no picker, no error. (Same class as the pet Import/Upload
+buttons, which are a separate follow-up.)
+
+**Cause:** the button called `window.api.app.pickFloatingWorkspaceDirectory()`, a **native
+OS file dialog**. A headless browser tile has no desktop dialog, so `web-preload-api.ts`
+stubs it to `() => Promise.resolve(null)` → the click resolves to nothing. But the floating
+terminals run on the connected **server** (the workspace host), where the directory must
+actually resolve — the same host the "Add a project → Browse folder" flow already lists.
+
+**Fix:**
+- On the web tile with an active runtime environment, the button opens the existing
+  `RemoteFileBrowser` (directory mode) instead of the native dialog — the same component and
+  RPC path (`browseRuntimeServerDirectory` → `files.browseServerDir`) that "Add a project"
+  uses — so the folder is chosen **on the server host** and written to `floatingTerminalCwd`.
+- Gated on `settings.activeRuntimeEnvironmentId` via a pure `shouldUseServerDirectoryBrowser`
+  helper; with no environment connected there's nothing to browse, so it falls back to the
+  native picker. **Desktop is unchanged.**
+- **No new RPC and no allowlist change** — reuses the already web-reachable
+  `files.browseServerDir`, so nothing new touches `MOBILE_RPC_METHOD_ALLOWLIST`.
+
+Touch points: `renderer/src/components/settings/FloatingWorkspacePane.tsx` (+ `.test.tsx`).
+
 ## 0005 — web-client agent-skill CLI registration
 
 `patches/0005-web-cli-registration.patch`
