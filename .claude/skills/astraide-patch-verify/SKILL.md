@@ -1,0 +1,53 @@
+---
+name: astraide-patch-verify
+description: Verify an astraide patch — typecheck, focused tests, whole-series-applies-on-pristine, and live checks in the workspace. Use after astraide-patch-author, before astraide-patch-ship, or to verify an astraide change independently.
+paths: apps/astraide/**
+---
+
+# astraide — verify a patch
+
+Operator-relative paths: `<fork>` = your `mrkhachaturov/orcaide` clone (branch
+`patch/trusted-proxy-v2`, base `v1.4.153`); `<repo>` = this appimages repo root.
+
+## 1. Typecheck + focused tests (run in `<fork>`)
+
+```bash
+cd <fork>
+mise x pnpm@10.24.0 -- pnpm install --ignore-scripts --prefer-offline   # mise has no pnpm pinned
+mise x pnpm@10.24.0 -- pnpm run typecheck:tsc                           # must be clean
+mise x pnpm@10.24.0 -- pnpm exec vitest run \
+  src/renderer/src/web/web-runtime-client.test.ts \
+  src/renderer/src/web/web-pairing.test.ts \
+  src/cli/runtime/launch.test.ts src/cli/args.test.ts \
+  src/main/runtime/rpc/methods/mobile-pairing.test.ts \
+  src/main/runtime/rpc/methods/pairing.test.ts \
+  src/main/runtime/rpc/methods/cli.test.ts \
+  src/main/runtime/mobile-rpc-allowlist.test.ts                         # all green
+```
+
+Pre-existing failures to IGNORE (env `@/`-alias quirk, not the patch): `web-preload-api.test.ts`
+and `agent-skill-cli-prerequisite.test.ts` fail to load — identical with/without changes.
+
+## 2. Whole series applies on pristine (same mechanism as the Dockerfile)
+
+```bash
+cd <fork>
+git worktree add --detach /tmp/orca-pristine v1.4.153
+for p in <repo>/apps/astraide/patches/*.patch; do
+  git -C /tmp/orca-pristine apply "$p" || break
+done && echo CLEAN
+git worktree remove --force /tmp/orca-pristine
+```
+
+Any FAIL = the series drifted from `v1.4.153`; the Dockerfile build will fail the same way.
+
+## 3. Live (after the ship rebuild) — workspace LXC **CT 100** (`astradev`) on host `coder01`
+
+```bash
+ssh coder01 'sudo pct exec 100 -- runuser -l coder -c "<cmd>"'
+# workspace module dir: /home/coder/.coder-modules/astrateam/astraide/  (extract, VERSION, logs/serve.log)
+```
+
+Pass criteria: `ss -ltn` shows `LISTEN 127.0.0.1:<PORT>` (never `0.0.0.0:6768`);
+`curl …/web-index.html` → 200; `curl …/trusted-session` (loopback) → 200; the tile loads with
+**no pairing prompt**. Bind truth is `ss` only — ready-JSON strings are derived.

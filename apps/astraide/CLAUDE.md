@@ -1,18 +1,13 @@
 # astraide — agent contract
 
-A patched [Orca](https://github.com/stablyai/orca) (`stablyai/orca`, MIT, Electron) built into
-a Linux `.AppImage` that runs `orca serve --trusted-proxy` behind a Coder subdomain app **like
-`code-server`**: click the workspace tile and the full Orca web UI loads — no pairing token in
-the URL, no per-workspace config. The Dockerfile is a hermetic **build sandbox**, not a shipped
-image; the artifact is the exported `.AppImage`, published as a GitHub Release asset.
+Upstream [Orca](https://github.com/stablyai/orca) (Electron, MIT) patched so `orca serve
+--trusted-proxy` runs behind a Coder subdomain tile **like `code-server`**: click the workspace
+tile → the full Orca web UI loads, no pairing token in the URL, no per-workspace config.
 
-This file is the single source of truth for this app. It replaces the old README, HANDOFF, and
-PROBLEM docs. Everything below is a **contract**: verified behavior, not aspiration. If you
-change behavior, change this file in the same commit.
-
-> Mobile pairing (patch `0002`) went **live 2026-07-24**: phone paired through the public
-> edge and survives workspace restarts (verified). The v3 handoff is folded into §1b, §4,
-> and §5 and deleted.
+Below is the **astraide-specific** contract — the invariants any patch must respect. (Generic
+AppImage-factory mechanics — build sandbox, fork = polygon, `git apply`, Renovate, CI — are in
+the repo-root CLAUDE.md. Per-patch history: [CHANGELOG.md](CHANGELOG.md).) Change behavior →
+change this file in the same commit.
 
 ---
 
@@ -22,87 +17,59 @@ Stock `orca serve` mints a per-startup pairing token and delivers it **only in t
 fragment** (`…/web-index.html#pairing=<token>`). A Coder tile URL is fixed at template-build
 time — it can never carry a runtime-minted fragment — so a stock tile lands on a "paste a
 pairing code" form. `code-server` solves the same problem with `--auth none` + loopback bind,
-trusting the proxy that already authenticated the user.
+trusting the proxy that already authenticated the user; astraide's opt-in `serve
+--trusted-proxy` does the same while keeping Orca's E2EE intact.
 
-`patches/` is a **series**: one patch per logical capability, applied in filename order by the
-Dockerfile (`for p in /patches/*.patch`). Patches are scoped by logic, never by count — a new
-independent capability gets the next number.
+The invariants below are what any patch must respect.
 
-**Each patch `000N` is a release.** The per-patch list — what shipped in each patch and why —
-lives in [CHANGELOG.md](CHANGELOG.md) (newest first); pushing a patch to `appimages` main
-republishes the AppImage (§3). Deep contracts for the security-sensitive capabilities stay
-here as §1a–§1c and are linked from the changelog.
+### The trusted-proxy web session
 
-### 1a. Patch 0001 — trusted-proxy web session
+- **Loopback bind = proof of Coder auth.** Trusted mode binds the runtime WS listener to
+  `127.0.0.1` only; a loopback peer is proof the request arrived through Coder (which enforced
+  auth) — code-server's `--auth none` + loopback model. `runtime-rpc.ts`.
+- **`GET /trusted-session`** (loopback-gated, `Cache-Control: no-store`): non-loopback → **404**;
+  no offer mintable yet → **503**; else **200** `{"pairingUrl": …}`. `static-web-client-handler.ts`.
+- **Same-origin dial.** The web client keeps the offer's E2EE credential but derives the WS
+  endpoint from `window.location`, so **the tile needs no `--pairing-address`**. On `auth-failed`
+  (serve re-keyed) it re-probes `/trusted-session` and adopts a NEW offer + reload; the SAME
+  token falls through to stock manual re-pair (that compare also guards the reload loop).
+  `web-pairing.ts`, `web-runtime-client.ts`, `web-preload-api.ts`.
+- **E2EE preserved** — the patch only moves the credential's delivery from URL fragment to a
+  loopback-gated fetch; Coder never reads runtime traffic. Device registry + keypair persist on
+  disk (`userDataPath`), so a stored offer survives restarts of the same server state.
+- **Threat model (accepted):** loopback gating means ANY local process on the host can read the
+  offer → runtime access. Safe ONLY on single-owner hosts (a per-user Coder workspace), never a
+  shared multi-user machine.
 
-Adds one opt-in capability, `serve --trusted-proxy`, that keeps Orca's E2EE intact:
+### Credential scopes & pairing
 
-| Piece | Contract | Where |
-|---|---|---|
-| **Loopback bind** | Trusted mode binds the runtime WS listener to `127.0.0.1` only. A loopback peer is proof the request came through Coder (which enforced auth) — code-server's `bind-addr: 127.0.0.1` + `--auth none` trust model. | `src/main/runtime/runtime-rpc.ts` |
-| **`GET /trusted-session`** | Loopback-gated JSON endpoint returning the current pairing offer: non-loopback → **404**; no offer mintable yet → **503**; else **200** `{"pairingUrl": "orca://pair?code=…"}` with `Cache-Control: no-store`. | `src/main/runtime/rpc/static-web-client-handler.ts` |
-| **Same-origin dial** | The web client keeps the offer's E2EE credential but replaces its WS endpoint with one derived from `window.location`. The browser already loaded from the correct Coder subdomain (`<app>--<workspace>--<owner>.<domain>`, dynamic per workspace), so **no `--pairing-address` is needed**. | `src/renderer/src/web/{web-pairing.ts,main.tsx}` |
-| **Stale-credential recovery** | On `auth-failed` (serve restarted → re-keyed offer), the web client re-probes `/trusted-session`; a NEW offer is adopted same-origin + page reload; the SAME token falls through to stock manual re-pair (that comparison is also the reload-loop guard). | `src/renderer/src/web/{web-runtime-client.ts,web-preload-api.ts}` |
-| **Honest reporting** | `orca_server_ready` reports the actual bind host (`ws://127.0.0.1:<port>` in trusted mode), not a hardcoded `0.0.0.0`. | `src/main/runtime/runtime-rpc.ts` |
+- Two scopes: **`mobile`** (phones — RPC allowlist + payload diet) and **`runtime`** (full
+  clients). `MOBILE_RPC_METHOD_ALLOWLIST` (`runtime-rpc.ts`) is the scope gate: a method's
+  **absence** from it = runtime-only. Anything host-mutating or that mints/revokes credentials
+  must never be on it — phone-reachable would be escalation. Test-enforced
+  (`mobile-rpc-allowlist.test.ts`).
+- **Credential mint/revoke** — mobile offers AND runtime-share grants (`mobile.createPairingOffer`,
+  `getRuntimePairingUrl`, the `list*`/`revoke*` pairs) — is authorized by the
+  `trustedMobilePairing` context, injected **only for `runtime`-scope connections**; absent →
+  fail closed. Server callbacks live in `buildTrustedMobilePairingContext()`; params are strict
+  zod (server-policy fields like addresses must error, not strip). `mobile-pairing.ts`.
+- **Advertised address is always server policy** (`--pairing-address`), never client-chosen; the
+  headless serve pins connection mode `local-only`. The QR/link carries
+  `wss://<app-slug>--<agent>--<workspace>--<owner>.<wildcard>/?coder_session_token=<token>` —
+  **Coder is authn, Orca is authz + E2EE**. Web-UI copy reframes to "connects through this
+  workspace" / "share the connected server" (the browser has no server of its own).
+- **The pairing URL is a double secret** (Orca device token + Coder session token) — owner-tile
+  / serve.log only; never build logs, Terraform outputs, or `coder_metadata`. Coder-token expiry
+  is recoverable (Regenerate `rotate:true` → rescan); the durable owner token (§4) survives
+  workspace restarts.
 
-**E2EE is kept** — the offer's credential carries the key; the patch only moves its delivery
-from the URL fragment to a loopback-gated fetch. Coder still cannot read runtime traffic.
+### The web client is mostly stubs
 
-**Threat model (accepted, by design):** loopback gating means ANY local process on the host can
-read the offer and gain runtime access — identical to code-server's `--auth none` posture, where
-same-machine implies same-owner. `--trusted-proxy` is only safe on single-owner hosts (a
-per-user Coder workspace), never on shared multi-user machines.
-
-**Offer persistence:** the device registry and E2EE keypair persist on disk (`userDataPath`),
-so a stored offer stays valid across restarts of the *same* server process state. The web client
-persists the environment and reuses it; re-fetching per load would mint a new device each
-reload. Recovery (above) handles the re-key case.
-
-### 1b. Patch 0002 — web-client mobile pairing
-
-Stock Orca's Settings → Mobile / "Pair this computer" screen is desktop-Electron-only: in the
-web client every `window.api.mobile.*` call was a hardcoded stub ("No interfaces found").
-The LAN-interface model is also wrong behind Coder — the workspace's IPs are never
-phone-reachable; the only address worth advertising is the Coder subdomain URL.
-
-| Piece | Contract | Where |
-|---|---|---|
-| **Runtime-RPC mint** | New methods `mobile.createPairingOffer` (`{rotate?}`, **strict** — caller-supplied addresses are an error), `mobile.listDevices`, `mobile.revokeDevice`. Authorization = `ctx.trustedMobilePairing`, injected at the WS transport boundary **only for `runtime`-scope connections**; absent → fail closed. None are in `MOBILE_RPC_METHOD_ALLOWLIST`, so a **paired phone (`mobile` scope) can never mint or revoke credentials** — both gates are test-enforced (`mobile-pairing.test.ts`, `mobile-rpc-allowlist.test.ts`). | `src/main/runtime/rpc/methods/mobile-pairing.ts`, `runtime-rpc.ts` (`buildTrustedMobilePairingContext`) |
-| **Server-side address policy** | Offers mint against the serve-configured `--pairing-address` with connection mode pinned `local-only` (headless serve has no Relay provider; Coder covers "anywhere"). No address configured → honest `available:false` with guidance. | `runtime-rpc.ts` |
-| **Web preload** | `getPairingQR`/`listDevices`/`revokeDevice` call runtime RPC; QR rendered client-side (`qrcode/lib/browser`, same params as desktop main). | `src/renderer/src/web/web-preload-api.ts` |
-| **Web UI** | Web client pins connection mode `local-only`; Relay/Local chooser replaced by a "connects through this workspace's web address" notice; interface picker + address step hidden (both the MobilePage hero and Settings → Mobile). Gate = `isWebClientLocation()`. | `use-mobile-pairing-connection-mode.ts`, `MobilePairingConnectionOptions.tsx`, `MobileHero.tsx`, `MobilePairingSetupSection.tsx` |
-
-**The advertised endpoint** (what the QR carries, minted by the template — see §4):
-
-```
-wss://<app-slug>--<agent>--<workspace>--<owner>.<wildcard>/?coder_session_token=<token>
-```
-
-Coder authenticates the phone's wss upgrade via the `coder_session_token` query param (same
-lane as Coder's own web terminal), proxies to the loopback WS listener, and Orca's E2EE
-device-token handshake runs on top: **Coder is authn, Orca is authz + E2EE**.
-
-**Security invariants (do not regress):** the pairing URL is a double secret (Orca device
-token + Coder session token) — owner-tile/serve.log only, never in build logs, Terraform
-outputs, or `coder_metadata`. The tokenized URL also appears in the loopback-gated
-`/trusted-session` offer body via `trustedProxyAddress` — accepted (single-owner workspace).
-Coder-token expiry is recoverable: Regenerate (`rotate:true`) → rescan.
-
-### 1c. Patch 0003 — web-client runtime share links
-
-Orca has two credential scopes: `mobile` (phones — RPC allowlist + payload diet) and
-`runtime` (full clients). The mobile QR (§1b) pairs a desktop app too, but it then runs
-*as a phone*. Upstream's "Advertise this app as a server → New Link" surface (runtime-scope
-grants) is desktop-only — a headless serve's grants were mintable by nobody.
-
-| Piece | Contract | Where |
-|---|---|---|
-| **Runtime-grant RPC** | `mobile.getRuntimePairingUrl` (`{rotate?}`, strict), `mobile.listRuntimeAccessGrants`, `mobile.revokeRuntimeAccess` — same `trustedMobilePairing` context gate (runtime-scope connections only; none mobile-allowlisted — a phone minting a runtime grant would be scope escalation, test-enforced). Grants mint against `--pairing-address`, scope `runtime`. | `mobile-pairing.ts`, `runtime-rpc.ts` |
-| **Web UI** | Settings → Remote Orca Servers shows the share section in web, reframed **"Share the connected server"** (the browser has no server of its own; grants belong to the workspace server it is connected to). Address picker hidden — server policy. Generate → pairing URL (paste into desktop "Add Server") + web-client URL; grants listed + revocable. | `Settings.tsx`, `RuntimeEnvironmentsPane.tsx`, `RuntimePairingGeneratorForm.tsx`, `web-preload-api.ts` |
-
-Note: the pending (never-connected) runtime device is shared between `/trusted-session`
-offers and New Link mints until first connect; New Link always rotates, and the tile's
-stale-credential recovery covers a browser that fetched an offer rotated out from under it.
+Orca's web client replaces the Electron preload with `web-preload-api.ts`
+(`createWebPreloadApi()`), and upstream **stubs most of it** — empty lists, `{available:false}`,
+no-op/throw. That is the root cause of nearly every "works on desktop, dead in the tile" report;
+the fix is almost always to route the stub to a runtime RPC (or add one), mirroring the desktop
+`ipc/*.ts` contract 1:1.
 
 ---
 
@@ -165,23 +132,19 @@ first run: serve installs `~/.local/bin/orca-ide` + a bare `orca` dispatcher —
 
 ---
 
-## 3. Build contract
+## 3. Build & release specifics
 
-- `docker-bake.hcl` pins `VERSION` to a **real `stablyai/orca` stable tag** (Renovate-tracked).
-  Verify against `git ls-remote upstream 'refs/tags/<tag>^{}'` — the fork's local tag store has
-  contained a fabricated `v1.4.154` that upstream never published.
-- Dockerfile: clone pristine tag → `git apply /patches/*` (**fails the build loudly** if the
-  patch drifts from VERSION) → `pnpm build:desktop` → `electron-builder --linux AppImage` →
-  export the `.AppImage`.
-- CI (`.github/workflows/release.yaml` → `app-builder.yaml`): any push to `apps/**` on main
-  rebuilds and publishes to the Release **tagged `astraide-<VERSION>`** with
-  `allowUpdates: true` — a re-release **replaces the asset under the same tag**.
-- **Same-tag updates:** the install script re-extracts when `VERSION` changes **or** when the
-  release asset's HTTP ETag differs from the one recorded at last extract (`ASSET_ETAG` next to
-  `VERSION` in the module dir). A same-version re-release is picked up on the next workspace
-  start with no template change; offline or ETag-less responses keep the cached extract so a
-  start never bricks. On refresh the script kills the old serve so the port guard relaunches
-  the fresh build.
+Generic build / Renovate / CI mechanics live in the repo-root CLAUDE.md. astraide-only:
+
+- **VERSION must be a REAL `stablyai/orca` tag** — verify with `git ls-remote upstream
+  'refs/tags/<tag>^{}'`; the fork's local tag store has held a fabricated `v1.4.154` that
+  upstream never published.
+- **Release:** CI publishes to the tag `astraide-<VERSION>` with `allowUpdates: true`, so a
+  re-release **replaces the asset under the same tag** — VERSION need not bump for a patch fix.
+- **Same-tag refresh:** the install script re-extracts when `VERSION` changes OR the asset's
+  HTTP ETag differs (`ASSET_ETAG` beside `VERSION` in the module dir); offline/ETag-less
+  responses keep the cached extract so a start never bricks. On refresh it kills the old serve
+  so the port guard relaunches the fresh build.
 
 ---
 
@@ -206,10 +169,9 @@ the durable token expires (Regenerate → rescan). Tokens are never echoed; temp
 escaping: shell `$${…}` AND curl format `%%{http_code}` (both `${` and `%{` are template
 directives).
 
-Test infrastructure: `ssh coder01` → Proxmox host (user `rkadmin`, sudo for `pct`). Workspace
-LXC = **CT 100** (`astradev`); run inside it with
-`ssh coder01 'sudo pct exec 100 -- runuser -l coder -c "<cmd>"'`. Module dir in the workspace:
-`/home/coder/.coder-modules/astrateam/astraide/` (extract, `VERSION`, `logs/serve.log`).
+Live test env: workspace LXC **CT 100** (`astradev`) on Proxmox host `coder01`; module dir
+`/home/coder/.coder-modules/astrateam/astraide/` holds the extract, `VERSION`, `logs/serve.log`.
+(How to run + verify inside it: `astraide-patch-verify` skill.)
 
 ---
 

@@ -7,14 +7,13 @@ rebuilds the `.AppImage` and re-publishes the same `astraide-<VERSION>` GitHub R
 asset (CLAUDE.md §3). The Dockerfile applies the series in filename order on the pristine
 upstream tag.
 
-This file is the skimmable "what shipped in each patch" list, newest first. The deep
-design contracts for the security-sensitive capabilities live in CLAUDE.md §1a–§1c and are
-linked below; simpler patches are fully described here.
+This file is the skimmable "what shipped in each patch" list, newest first. The durable
+invariants behind these capabilities live in CLAUDE.md §1.
 
 Recurring root cause: Orca's web client replaces the Electron preload with
 `web-preload-api.ts` and upstream **stubs most of it** — empty lists, `{available:false}`,
 throw-on-call. Most "works on desktop, dead in the tile" reports are one of those stubs; the
-`astraide-patch-workflow` skill has the fix playbook.
+`astraide-patch-author` skill has the diagnose/fix playbook.
 
 ---
 
@@ -63,7 +62,7 @@ stub→RPC reroute; falls back to the empty snapshot only when no environment is
 
 ## 0003 — web-client runtime share links
 
-`patches/0003-web-runtime-share-links.patch` · contract: CLAUDE.md §1c
+`patches/0003-web-runtime-share-links.patch` · contract: CLAUDE.md §1
 
 Upstream's "Advertise this app as a server → New Link" surface (runtime-scope grants) is
 desktop-only, so a headless serve's grants were mintable by nobody. Adds
@@ -74,7 +73,7 @@ runtime grant would be scope escalation), and reframes Settings → Remote Orca 
 
 ## 0002 — web-client mobile pairing
 
-`patches/0002-web-mobile-pairing.patch` · contract: CLAUDE.md §1b · **went live 2026-07-24**
+`patches/0002-web-mobile-pairing.patch` · contract: CLAUDE.md §1 · **went live 2026-07-24**
 
 Stock Orca's "Pair this computer" screen is desktop-only — in the web client every
 `window.api.mobile.*` call was a stub, and the LAN-interface model is wrong behind Coder.
@@ -86,7 +85,7 @@ by the install script (CLAUDE.md §4).
 
 ## 0001 — trusted-proxy web session
 
-`patches/0001-serve-trusted-proxy-web-session.patch` · contract: CLAUDE.md §1a
+`patches/0001-serve-trusted-proxy-web-session.patch` · contract: CLAUDE.md §1
 
 The foundation: `serve --trusted-proxy` binds the runtime WS listener to `127.0.0.1` and
 exposes a loopback-gated `GET /trusted-session` offer, so the Coder subdomain tile loads
