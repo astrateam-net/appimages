@@ -17,6 +17,45 @@ throw-on-call. Most "works on desktop, dead in the tile" reports are one of thos
 
 ---
 
+## 0008 — open a worktree in a browser editor
+
+`patches/0008-web-open-in-browser-editor-urls.patch`
+
+**Symptom:** in the tile, every **Open in** entry is disabled ("Local only"). There is no way to
+open a worktree in an editor at all.
+
+**Cause:** an Open In entry could only be a local shell command. `command` spawns a process on
+*this* machine against a path that lives on *another* one, so the runtime disables all of them
+whenever `activeRuntimeEnvironmentId` is set — which it always is for a web client. Behind that
+guard, `openInExternalEditor` is a no-op returning `{ok:true}`, so even reaching it would lie.
+
+**Fix:** an optional `url` on `OpenInApplication`, with `{path}` substituted by the worktree's
+absolute path. A browser editor served by the host that owns the path has neither problem — it
+is just a URL — so URL entries skip the guards and open through `shell.openUrl` on desktop and
+web alike:
+
+```
+https://code-server--<workspace>--<owner>.<domain>/?folder={path}
+```
+
+Per-worktree, which is the point: Coder's own code-server tile opens one fixed folder, while
+Orca knows every worktree path.
+
+**Nothing deployment-specific enters Orca.** The slug, the domain, the reachability all live in
+the template string, which the operator writes. Icons resolve from the entry's stable `id`
+(`code-server`, `vscode-web`, `vscode`, `cursor`) — never the URL's host, which carries a
+deployment-chosen slug on a domain no favicon service can reach. code-server and vscode-web
+borrow VS Code's mark because they *are* VS Code in a browser, and neither has a usable icon of
+its own: `code-server.dev` redirects to GitHub, so a favicon lookup there returns the octocat.
+
+**Seedable, URL entries only.** `openInApplications` joins 0007's allowlist under a strict schema
+that drops any entry carrying a `command` — that is a shell command a desktop client executes,
+and seeding travels runtime → client. Templates are restricted to `http`/`https` for the same
+reason; `javascript:` would turn a menu click into script execution. Both test-enforced.
+
+**Known gap:** Settings can edit a URL entry (the field survives an edit) but cannot create one
+yet. They arrive seeded from the runtime.
+
 ## Renamed: astraide → orca-coder; VERSION v1.4.153 → v1.4.155
 
 The app was called **astraide**, which implied a product we author. It never was one: what

