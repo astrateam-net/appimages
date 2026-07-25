@@ -1,0 +1,33 @@
+diff --git a/src/renderer/src/components/DetachedHeadBadge.tsx b/src/renderer/src/components/DetachedHeadBadge.tsx
+index 58a12e639..79a7c9bd1 100644
+--- a/src/renderer/src/components/DetachedHeadBadge.tsx
++++ b/src/renderer/src/components/DetachedHeadBadge.tsx
+@@ -12,13 +12,19 @@ type DetachedHeadBadgeProps = {
+   label?: 'sidebar' | 'source-control'
+   side?: React.ComponentProps<typeof TooltipContent>['side']
+   className?: string
++  // Why: source-control-branch-context-row.tsx passes tabIndex to keep the detached-head
++  // tooltip keyboard-reachable, but v1.4.155 shipped that caller without widening these props,
++  // so `pnpm typecheck` (and therefore `build:desktop`) fails on a from-source build. Upstream
++  // fixed it the same way after the release; drop this patch once a tag carries the fix.
++  tabIndex?: number
+ }
+ 
+ export function DetachedHeadBadge({
+   display,
+   label = 'source-control',
+   side = 'right',
+-  className
++  className,
++  tabIndex
+ }: DetachedHeadBadgeProps): React.JSX.Element {
+   const visibleLabel = label === 'sidebar' ? display.sidebarLabel : display.sourceControlLabel
+ 
+@@ -27,6 +33,7 @@ export function DetachedHeadBadge({
+       <TooltipTrigger asChild>
+         <Badge
+           variant="outline"
++          tabIndex={tabIndex}
+           className={cn(
+             'h-[18px] shrink-0 gap-1 rounded px-1.5 text-[10px] font-medium leading-none',
+             'border-[color:color-mix(in_srgb,var(--git-decoration-modified)_30%,transparent)] bg-[color:color-mix(in_srgb,var(--git-decoration-modified)_8%,transparent)] text-[color:var(--git-decoration-modified)]',

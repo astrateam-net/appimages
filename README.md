@@ -14,7 +14,7 @@ as a hermetic build sandbox; the artifact extracted and released is the
 
 | App | Upstream | What it is |
 |-----|----------|-----------|
-| [`astraide`](apps/astraide/) | [stablyai/orca](https://github.com/stablyai/orca) | Orca runtime (`orca serve`) with the trusted-proxy web-session patch, for running behind Coder like `code-server`. |
+| [`orca-coder`](apps/orca-coder/) | [stablyai/orca](https://github.com/stablyai/orca) | Upstream Orca (MIT) at a pinned release tag plus our patch series — the runtime (`orca serve`) with the trusted-proxy web-session patch, packaged for running behind Coder like `code-server`. Not a fork we maintain: the app keeps upstream's identity (`productName` `Orca`, `appId` `com.stablyai.orca`, userData `~/.config/orca`); only the release asset is named `orca-coder` — "Orca, for Coder". |
 
 ## How a build works
 
@@ -26,12 +26,16 @@ as a hermetic build sandbox; the artifact extracted and released is the
    `docker buildx bake` → `--output type=local` and publishes it via a GitHub
    Release (`ncipollo/release-action`).
 
-The build depends only on **upstream**, never on a fork. Patches are authored and
-tested in the app's fork (the "polygon") and exported here as plain diffs.
+The build depends only on **upstream**, never on a fork. What ships is the pristine
+upstream release tag with `patches/` applied on top — no app here is a fork we
+maintain, and each built app keeps upstream's own identity (`productName`, `appId`,
+userData path) verbatim. Only the release asset carries our name. Patches are
+authored and tested in the app's fork (the "polygon") and exported here as plain
+diffs.
 
 ## Consuming an AppImage
 
-Releases are tagged `<app>-<version>` (e.g. `astraide-v1.4.154`). Install via
+Releases are tagged `<app>-<version>` (e.g. `orca-coder-v1.4.154`). Install via
 script the way Coder installs `code-server` — download the release asset,
 `chmod +x`, run. See each app's directory for its runtime flags.
 
@@ -39,7 +43,7 @@ script the way Coder installs `code-server` — download the release asset,
 
 ```bash
 mise install                              # host toolchain (jq)
-docker buildx bake -f apps/astraide/docker-bake.hcl appimage   # -> ./dist/*.AppImage
+docker buildx bake -f apps/orca-coder/docker-bake.hcl appimage   # -> ./dist/*.AppImage
 ```
 
 ## Conventions

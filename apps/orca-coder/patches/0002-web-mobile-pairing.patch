@@ -337,7 +337,7 @@ index 92151612e..4687d307b 100644
          sendBinary,
          registerBinaryStreamHandler: (streamId, handler) =>
 diff --git a/src/renderer/src/components/mobile/MobileHero.tsx b/src/renderer/src/components/mobile/MobileHero.tsx
-index cdb49f7c7..dd632451e 100644
+index e9fdc7154..0c196428e 100644
 --- a/src/renderer/src/components/mobile/MobileHero.tsx
 +++ b/src/renderer/src/components/mobile/MobileHero.tsx
 @@ -8,6 +8,7 @@ import { MobilePairingConnectionOptions } from '../settings/MobilePairingConnect
@@ -491,7 +491,7 @@ index cb77f82e6..8dd0d5f04 100644
          }
        } catch {
 diff --git a/src/renderer/src/components/settings/MobilePairingConnectionOptions.tsx b/src/renderer/src/components/settings/MobilePairingConnectionOptions.tsx
-index 986fed94b..2b68251a4 100644
+index 3314ea70f..d258b71ac 100644
 --- a/src/renderer/src/components/settings/MobilePairingConnectionOptions.tsx
 +++ b/src/renderer/src/components/settings/MobilePairingConnectionOptions.tsx
 @@ -1,10 +1,11 @@
@@ -695,7 +695,7 @@ index 2f5453013..da58fd70d 100644
        <div className="space-y-2">
          <Button onClick={onGenerateQr} disabled={generateDisabled} size="sm" className="gap-1.5">
 diff --git a/src/renderer/src/components/settings/MobilePane.tsx b/src/renderer/src/components/settings/MobilePane.tsx
-index 35b0e1cbc..002122d1c 100644
+index aa2a9aa94..231d531ac 100644
 --- a/src/renderer/src/components/settings/MobilePane.tsx
 +++ b/src/renderer/src/components/settings/MobilePane.tsx
 @@ -25,6 +25,7 @@ import {

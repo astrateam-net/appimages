@@ -1,10 +1,10 @@
-# AppImage factory target for astraide (Orca runtime, trusted-proxy patch).
+# AppImage factory target for orca-coder (Orca runtime, trusted-proxy patch).
 # Docker is only a hermetic build sandbox — the `export` stage is written out via
 # `buildx --output type=local`, not shipped as an image.
 
 variable "VERSION" {
   // renovate: datasource=github-releases depName=stablyai/orca
-  default = "v1.4.153"
+  default = "v1.4.155"
 }
 
 variable "SOURCE" {

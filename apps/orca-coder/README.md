@@ -1,9 +1,14 @@
-# astraide — Orca as a one-click Coder app
+# orca-coder — Orca as a one-click Coder app
 
-A patched [Orca](https://github.com/stablyai/orca) built into a Linux `.AppImage` that runs
+Upstream [Orca](https://github.com/stablyai/orca) (MIT), built from a pinned release tag with
+our [`patches/`](patches/) applied, into a Linux `.AppImage` that runs
 `orca serve --trusted-proxy` behind a Coder subdomain app **like `code-server`**: click the
 workspace tile and the full Orca web UI loads — no pairing code, no token in the URL, any
 workspace name.
+
+`orca-coder` is not a fork we maintain — it is "Orca, for Coder", and the name lives only on the
+release asset. The app itself stays upstream's: `productName` `Orca`, `appId`
+`com.stablyai.orca`, userData `~/.config/orca`.
 
 > Full agent/operator contract — design invariants, launch rules, verification, gotchas —
 > lives in [CLAUDE.md](CLAUDE.md). This README is the short human tour.
@@ -22,10 +27,10 @@ mirrors `code-server`'s `--auth none` + loopback trust model while keeping Orca'
 ## Use it
 
 Grab the latest asset from
-[Releases](https://github.com/astrateam-net/appimages/releases) (`astraide-<VERSION>-x86_64.AppImage`, amd64 only), then:
+[Releases](https://github.com/astrateam-net/appimages/releases) (`orca-coder-<VERSION>-x86_64.AppImage`, amd64 only), then:
 
 ```bash
-./astraide-<VERSION>-x86_64.AppImage --appimage-extract   # LXC/no-FUSE friendly
+./orca-coder-<VERSION>-x86_64.AppImage --appimage-extract   # LXC/no-FUSE friendly
 LIBGL_ALWAYS_SOFTWARE=1 ORCA_APPIMAGE_NO_SANDBOX=1 dbus-run-session -- xvfb-run -a \
   squashfs-root/resources/bin/orca-ide serve --trusted-proxy --port 6799
 ```
@@ -39,4 +44,4 @@ is the desktop GUI entry and silently ignores `serve`. Needs the Chromium shared
 `docker-bake.hcl` pins `VERSION` to a real upstream tag (Renovate-tracked). The Dockerfile
 clones that tag, applies [`patches/`](patches/) (build fails loudly on drift), runs the
 Electron build, and exports the `.AppImage`. Any push touching `apps/**` on `main` rebuilds
-and republishes the Release asset under the same `astraide-<VERSION>` tag.
+and republishes the Release asset under the same `orca-coder-<VERSION>` tag.

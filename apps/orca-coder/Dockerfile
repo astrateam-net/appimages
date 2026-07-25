@@ -76,7 +76,7 @@ RUN pnpm build:desktop \
 RUN mkdir -p /out \
   && f="$(ls dist/*.AppImage | head -1)" \
   && test -n "$f" \
-  && cp "$f" "/out/astraide-${VERSION}-x86_64.AppImage" \
+  && cp "$f" "/out/orca-coder-${VERSION}-x86_64.AppImage" \
   && ls -l /out
 
 # ── export ─────────────────────────────────────────────────────────────────

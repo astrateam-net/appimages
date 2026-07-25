@@ -37,12 +37,12 @@
     },
     {
       description: [
-        "astraide is a patch-over-upstream build: patches/*.patch are anchored",
+        "orca-coder is a patch-over-upstream build: patches/*.patch are anchored",
         "to the upstream tag's files. A VERSION-only bump can fail `git apply`",
         "(loud — CI goes red) and always needs a human to refresh the patch.",
         "Never auto-merge.",
       ],
-      matchFileNames: ["apps/astraide/docker-bake.hcl"],
+      matchFileNames: ["apps/orca-coder/docker-bake.hcl"],
       automerge: false,
       labels: ["review-required"],
     },

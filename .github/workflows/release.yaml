@@ -14,7 +14,7 @@ on:
         type: string
         description: Application name
         required: true
-        default: astraide
+        default: orca-coder
 
 jobs:
   prepare:

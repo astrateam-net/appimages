@@ -17,7 +17,7 @@ published as a GitHub Release asset.
 
 ```bash
 mise install                                                   # host jq
-docker buildx bake -f apps/astraide/docker-bake.hcl appimage   # -> ./dist/*.AppImage
+docker buildx bake -f apps/orca-coder/docker-bake.hcl appimage   # -> ./dist/*.AppImage
 ```
 
 ## Version discipline (IMPORTANT — do not use training-data versions)

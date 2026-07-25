@@ -1,31 +1,42 @@
 ---
-name: astraide-patch-author
-description: Create an astraide patch — diagnose a stubbed web-client feature and implement the fix in the Orca fork, then export the boundary diff to apps/astraide/patches/. Use when adding or fixing an astraide capability. Hand to astraide-patch-verify when done.
-paths: apps/astraide/**
+name: orca-coder-patch-author
+description: Create an orca-coder patch — diagnose a stubbed web-client feature and implement the fix in the Orca fork, then export the boundary diff to apps/orca-coder/patches/. Use when adding or fixing an orca-coder capability. Hand to orca-coder-patch-verify when done.
+paths: apps/orca-coder/**
 ---
 
-# astraide — author a patch
+# orca-coder — author a patch
 
-astraide = patched upstream Orca → Linux AppImage. `apps/astraide/patches/` is a series of
+orca-coder = patched upstream Orca → Linux AppImage. `apps/orca-coder/patches/` is a series of
 `git diff`s applied in filename order on pristine `v1.4.153`. **Author in the fork, never in this
-repo.** Invariants you must respect: `apps/astraide/CLAUDE.md`. History: `apps/astraide/CHANGELOG.md`.
+repo.** Invariants you must respect: `apps/orca-coder/CLAUDE.md`. History: `apps/orca-coder/CHANGELOG.md`.
 
 Paths are operator-relative — resolve these on your machine:
-- `<fork>` = your clone of `mrkhachaturov/orcaide` @ branch `patch/trusted-proxy-v2` (base `v1.4.153`).
-  Ignore branch `patch/trusted-proxy` — phantom `v1.4.154` base.
+- `<fork>` = your clone of `mrkhachaturov/orcaide` @ branch `patch/trusted-proxy-v2` (base `v1.4.155`).
+  Ignore branch `patch/trusted-proxy` — phantom `v1.4.154` base. `backup/v153-series` holds the
+  pre-bump series on `v1.4.153`.
 - `<repo>` = this appimages repo root.
 
 Each patch = diff between consecutive feature-boundary commits on the fork branch:
 
 | Patch | Boundary |
 |---|---|
-| 0001 trusted-proxy session | `v1.4.153 → 3d65845c6` |
-| 0002 web mobile pairing | `3d65845c6 → 7c145fb1a` |
-| 0003 web runtime share links | `7c145fb1a → c94cca036` |
-| 0004 web resource manager | `c94cca036 → 6375c2bf2` |
-| 0005 web CLI registration | `6375c2bf2 → a50a20da2` |
-| 0006 web floating-workspace dir picker | `a50a20da2 → 6c55cf070` |
-| next | `<prev-boundary> → <new-commit>` → `0007-…` |
+| 0000 upstream tabIndex fix ⚠️ | `v1.4.155 → 0aa5de8de` |
+| 0001 trusted-proxy session | `0aa5de8de → 5a7d91cdf` |
+| 0002 web mobile pairing | `5a7d91cdf → b20a3c698` |
+| 0003 web runtime share links | `b20a3c698 → 2dcb65770` |
+| 0004 web resource manager | `2dcb65770 → 4cb98816b` |
+| 0005 web CLI registration | `4cb98816b → 1c7f9328a` |
+| 0006 web floating-workspace dir picker | `1c7f9328a → 704608cf1` |
+| 0007 runtime-seeded settings | `704608cf1 → f8c81885b` |
+| next | `<prev-boundary> → <new-commit>` → `0008-…` |
+
+⚠️ **0000 is an upstream bugfix, not an orca-coder capability** — see `apps/orca-coder/CLAUDE.md` §3.
+Drop it the moment a tag declares `tabIndex` on `DetachedHeadBadgeProps`.
+
+**Rebasing the series onto a new tag:** `git branch -f backup/<old> HEAD` first, then
+`git rebase --onto <newtag> <oldtag> patch/trusted-proxy-v2`, re-export every boundary, and
+`rm -f config/*.tsbuildinfo` before typechecking — stale incremental build info will happily
+report an error you already fixed (and hide one you just introduced).
 
 ## Diagnose (the usual bug: a web-client stub)
 
@@ -61,7 +72,7 @@ RPC method is the patch.
 2. Export the boundary diff:
    ```bash
    cd <fork>
-   git diff <prev-boundary> HEAD > <repo>/apps/astraide/patches/000N-<capability>.patch
+   git diff <prev-boundary> HEAD > <repo>/apps/orca-coder/patches/000N-<capability>.patch
    ```
 
-→ Hand to **astraide-patch-verify**.
+→ Hand to **orca-coder-patch-verify**.

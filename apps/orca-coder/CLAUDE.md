@@ -1,10 +1,10 @@
-# astraide — agent contract
+# orca-coder — agent contract
 
 Upstream [Orca](https://github.com/stablyai/orca) (Electron, MIT) patched so `orca serve
 --trusted-proxy` runs behind a Coder subdomain tile **like `code-server`**: click the workspace
 tile → the full Orca web UI loads, no pairing token in the URL, no per-workspace config.
 
-Below is the **astraide-specific** contract — the invariants any patch must respect. (Generic
+Below is the **orca-coder-specific** contract — the invariants any patch must respect. (Generic
 AppImage-factory mechanics — build sandbox, fork = polygon, `git apply`, Renovate, CI — are in
 the repo-root CLAUDE.md. Per-patch history: [CHANGELOG.md](CHANGELOG.md).) Change behavior →
 change this file in the same commit.
@@ -17,7 +17,7 @@ Stock `orca serve` mints a per-startup pairing token and delivers it **only in t
 fragment** (`…/web-index.html#pairing=<token>`). A Coder tile URL is fixed at template-build
 time — it can never carry a runtime-minted fragment — so a stock tile lands on a "paste a
 pairing code" form. `code-server` solves the same problem with `--auth none` + loopback bind,
-trusting the proxy that already authenticated the user; astraide's opt-in `serve
+trusting the proxy that already authenticated the user; orca-coder's opt-in `serve
 --trusted-proxy` does the same while keeping Orca's E2EE intact.
 
 The invariants below are what any patch must respect.
@@ -93,7 +93,7 @@ Canonical launch (what the Coder install script does — see §4):
 
 ```bash
 # LXC has no FUSE → extract once per VERSION:
-./astraide-<VERSION>-x86_64.AppImage --appimage-extract        # → squashfs-root/
+./orca-coder-<VERSION>-x86_64.AppImage --appimage-extract        # → squashfs-root/
 # ALWAYS the shim, NEVER AppRun:
 LIBGL_ALWAYS_SOFTWARE=1 ORCA_APPIMAGE_NO_SANDBOX=1 nohup dbus-run-session -- xvfb-run -a \
   squashfs-root/resources/bin/orca-ide serve --trusted-proxy --port "$PORT" \
@@ -134,12 +134,23 @@ first run: serve installs `~/.local/bin/orca-ide` + a bare `orca` dispatcher —
 
 ## 3. Build & release specifics
 
-Generic build / Renovate / CI mechanics live in the repo-root CLAUDE.md. astraide-only:
+Generic build / Renovate / CI mechanics live in the repo-root CLAUDE.md. orca-coder-only:
 
 - **VERSION must be a REAL `stablyai/orca` tag** — verify with `git ls-remote upstream
   'refs/tags/<tag>^{}'`; the fork's local tag store has held a fabricated `v1.4.154` that
   upstream never published.
-- **Release:** CI publishes to the tag `astraide-<VERSION>` with `allowUpdates: true`, so a
+- **⚠️ `0000-upstream-detached-head-badge-tabindex.patch` is NOT ours — DROP IT when upstream
+  ships the fix.** It is the only patch in the series that fixes an *upstream* bug rather than
+  adding an orca-coder capability. `v1.4.155` shipped `source-control-branch-context-row.tsx`
+  passing `tabIndex={0}` to `DetachedHeadBadge` without widening `DetachedHeadBadgeProps`, so
+  `pnpm typecheck` fails — and `build:desktop` runs typecheck first, so a from-source build of
+  `v1.4.155` cannot complete without it. Every tag through `v1.4.156-rc.2` carries the same
+  mismatch; upstream fixed it on `main` after the release (`tabIndex?: number` + forward to
+  `Badge`), identically. **On every VERSION bump, check whether the new tag already declares
+  `tabIndex` on `DetachedHeadBadgeProps` — if it does, delete this patch and renumber nothing
+  (the others are independent).** Leaving it in once upstream has the fix makes `git apply`
+  fail the build, which is the intended loud signal but wastes a cycle.
+- **Release:** CI publishes to the tag `orca-coder-<VERSION>` with `allowUpdates: true`, so a
   re-release **replaces the asset under the same tag** — VERSION need not bump for a patch fix.
 - **Same-tag refresh:** the install script re-extracts when `VERSION` changes OR the asset's
   HTTP ETag differs (`ASSET_ETAG` beside `VERSION` in the module dir); offline/ETag-less
@@ -152,10 +163,11 @@ Generic build / Renovate / CI mechanics live in the repo-root CLAUDE.md. astraid
 
 | Repo | Path | Role |
 |---|---|---|
-| **appimages** (this) | `apps/astraide/` | Builds + releases the AppImage |
+| **appimages** (this) | `apps/orca-coder/` | Builds + releases the AppImage |
 | **fork** | `mrkhachaturov/orcaide` @ `patch/trusted-proxy-v2` | Patch authoring (worktree `…/orcaide-v2`) |
 | **upstream clone** | `…/astrateam-net/containers/.upstream/orca` | Read-only source for tracing |
-| **control-plane** | `terraform/coder/templates/proxmox-lxc/{astraide.tf, scripts/install-astraide.sh}` | Installs + launches in the workspace, publishes the `coder_app` tile (`url = "http://localhost:6799"`, `subdomain = true`, `share = "owner"`). Mobile pairing: the script passes `--pairing-address "https://<app-hostname>/?coder_session_token=<durable token>"` |
+| **Coder module** | GitLab `registry/terraform-modules/coder/registry/astrateam/modules/orca/` (`main.tf`, `scripts/install.sh`) | Installs + launches in the workspace, publishes the `coder_app` tile (`url = "http://localhost:6799"`, `subdomain = true`, `share = "owner"`). Mobile pairing: the script passes `--pairing-address "https://<app-hostname>/?coder_session_token=<durable token>"`. Module name is **`orca`** — `orca-coder` names only the release asset it downloads |
+| **control-plane** | `terraform/coder/templates/proxmox-lxc/agent.tf` → `module "orca"` | Consumes the registry module (`source = "code.astrateam.net/registry/orca/coder"`). It holds **no** install script of its own — an earlier `astraide.tf` + `scripts/install-astraide.sh` pair was folded into the module |
 
 **Durable pairing token (verified live 2026-07-24):** `data.coder_workspace_owner.me.session_token`
 is **revoked on every rebuild**, so it is only the *bootstrap* credential. The install script
@@ -170,8 +182,10 @@ escaping: shell `$${…}` AND curl format `%%{http_code}` (both `${` and `%{` ar
 directives).
 
 Live test env: workspace LXC **CT 100** (`astradev`) on Proxmox host `coder01`; module dir
-`/home/coder/.coder-modules/astrateam/astraide/` holds the extract, `VERSION`, `logs/serve.log`.
-(How to run + verify inside it: `astraide-patch-verify` skill.)
+`/home/coder/.coder-modules/astrateam/orca/` holds the extract, `VERSION`, `logs/serve.log`
+(the Coder module is named `orca`, NOT `orca-coder` — `orca-coder` names only the release asset;
+verified live 2026-07-25).
+(How to run + verify inside it: `orca-coder-patch-verify` skill.)
 
 ---
 

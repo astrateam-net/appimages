@@ -1,10 +1,10 @@
 ---
-name: astraide-patch-verify
-description: Verify an astraide patch — typecheck, focused tests, whole-series-applies-on-pristine, and live checks in the workspace. Use after astraide-patch-author, before astraide-patch-ship, or to verify an astraide change independently.
-paths: apps/astraide/**
+name: orca-coder-patch-verify
+description: Verify an orca-coder patch — typecheck, focused tests, whole-series-applies-on-pristine, and live checks in the workspace. Use after orca-coder-patch-author, before orca-coder-patch-ship, or to verify an orca-coder change independently.
+paths: apps/orca-coder/**
 ---
 
-# astraide — verify a patch
+# orca-coder — verify a patch
 
 Operator-relative paths: `<fork>` = your `mrkhachaturov/orcaide` clone (branch
 `patch/trusted-proxy-v2`, base `v1.4.153`); `<repo>` = this appimages repo root.
@@ -39,7 +39,7 @@ load and are safe to IGNORE (pre-existing, identical with/without your change):
 ```bash
 cd <fork>
 git worktree add --detach /tmp/orca-pristine v1.4.153
-for p in <repo>/apps/astraide/patches/*.patch; do
+for p in <repo>/apps/orca-coder/patches/*.patch; do
   git -C /tmp/orca-pristine apply "$p" || break
 done && echo CLEAN
 git worktree remove --force /tmp/orca-pristine
@@ -51,7 +51,7 @@ Any FAIL = the series drifted from `v1.4.153`; the Dockerfile build will fail th
 
 ```bash
 ssh coder01 'sudo pct exec 100 -- runuser -l coder -c "<cmd>"'
-# workspace module dir: /home/coder/.coder-modules/astrateam/astraide/  (extract, VERSION, logs/serve.log)
+# workspace module dir: /home/coder/.coder-modules/astrateam/orca-coder/  (extract, VERSION, logs/serve.log)
 ```
 
 Pass criteria: `ss -ltn` shows `LISTEN 127.0.0.1:<PORT>` (never `0.0.0.0:6768`);

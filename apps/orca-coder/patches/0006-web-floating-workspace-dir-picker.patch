@@ -100,7 +100,7 @@ index 397fa0981..8c5920029 100644
 +  })
  })
 diff --git a/src/main/runtime/orca-runtime.ts b/src/main/runtime/orca-runtime.ts
-index 6b69e3b06..432b9bcf4 100644
+index 92568b4af..1c42b0135 100644
 --- a/src/main/runtime/orca-runtime.ts
 +++ b/src/main/runtime/orca-runtime.ts
 @@ -116,6 +116,7 @@ import type {
@@ -111,7 +111,7 @@ index 6b69e3b06..432b9bcf4 100644
    PersistedUIState,
    Project,
    ProjectUpdateArgs,
-@@ -745,6 +746,11 @@ import {
+@@ -757,6 +758,11 @@ import {
  } from '../git/worktree'
  import type { AddWorktreeOptions, AddWorktreeResult } from '../git/worktree'
  import { isENOENT } from '../ipc/filesystem-auth'
@@ -123,7 +123,7 @@ index 6b69e3b06..432b9bcf4 100644
  import {
    createSetupRunnerScript,
    getDefaultTabCommandTrustContent,
-@@ -14559,6 +14565,32 @@ export class OrcaRuntimeService {
+@@ -14571,6 +14577,32 @@ export class OrcaRuntimeService {
      return scanNestedRepos({ path, options: { timeoutMs: 15_000 } })
    }
  

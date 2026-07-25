@@ -1,9 +1,9 @@
-# astraide changelog
+# orca-coder changelog
 
-astraide ships as a **patch series** over pristine upstream Orca (see
+orca-coder ships as a **patch series** over pristine upstream Orca (see
 [CLAUDE.md](CLAUDE.md) for the build + authoring contract). Each patch `000N` is an
 independent capability and, in practice, a **release**: merging it to `appimages` main
-rebuilds the `.AppImage` and re-publishes the same `astraide-<VERSION>` GitHub Release
+rebuilds the `.AppImage` and re-publishes the same `orca-coder-<VERSION>` GitHub Release
 asset (CLAUDE.md §3). The Dockerfile applies the series in filename order on the pristine
 upstream tag.
 
@@ -13,9 +13,70 @@ invariants behind these capabilities live in CLAUDE.md §1.
 Recurring root cause: Orca's web client replaces the Electron preload with
 `web-preload-api.ts` and upstream **stubs most of it** — empty lists, `{available:false}`,
 throw-on-call. Most "works on desktop, dead in the tile" reports are one of those stubs; the
-`astraide-patch-author` skill has the diagnose/fix playbook.
+`orca-coder-patch-author` skill has the diagnose/fix playbook.
 
 ---
+
+## Renamed: astraide → orca-coder; VERSION v1.4.153 → v1.4.155
+
+The app was called **astraide**, which implied a product we author. It never was one: what
+ships is upstream Orca (MIT) from a pinned tag with this patch series applied, and the built
+app keeps upstream's identity verbatim (`productName` `Orca`, `appId` `com.stablyai.orca`,
+userData `~/.config/orca`). The invented name only ever labelled the release asset — and it
+actively misled, including us, when a screenshot could not be attributed to "our Orca" vs
+upstream's. `orca-coder` says what it is: Orca, for Coder. Release tag and asset become
+`orca-coder-<VERSION>`; the Coder module that consumes them stays named `orca`.
+
+VERSION moved to `v1.4.155` (latest upstream stable; there is no `v1.4.154`). The series
+rebased with zero conflicts — only 4 of the 41 files the patches touch changed between tags.
+
+## 0000 — upstream `DetachedHeadBadge` tabIndex fix ⚠️ NOT OURS
+
+`patches/0000-upstream-detached-head-badge-tabindex.patch`
+
+**Symptom:** `v1.4.155` cannot be built from source at all. `pnpm typecheck` fails TS2322,
+and `build:desktop` runs typecheck first, so the Docker build dies before packaging.
+
+**Cause:** upstream shipped `source-control-branch-context-row.tsx` passing `tabIndex={0}` to
+`DetachedHeadBadge` without widening `DetachedHeadBadgeProps`. Every tag through
+`v1.4.156-rc.2` carries the mismatch; their own release pipeline evidently does not run this
+typecheck.
+
+**Fix:** declare `tabIndex?: number` and forward it to the rendered `Badge` — identical to the
+fix upstream landed on `main` after the release.
+
+**⚠️ Delete this patch as soon as a tag declares the prop.** It is the only entry in the series
+that fixes an upstream bug rather than adding a capability. Per-bump check in CLAUDE.md §3.
+
+## 0007 — runtime-seeded appearance + experimental settings
+
+`patches/0007-web-runtime-seeded-settings.patch`
+
+**Symptom:** a freshly provisioned workspace could not declare how its Orca looks or which
+features are on. Every browser opening the tile started at stock defaults, and the same
+toggles got re-clicked after every workspace create. Writing `orca-data.json` on the workspace
+changed nothing — verified three ways: seeded while serve was stopped then restarted, written
+while serve ran, and re-set with a full browser reload. The UI never moved.
+
+**Cause:** the web client keeps settings in **localStorage** (`orca.web.settings.v1`), not on
+the workspace. Of 183 `GlobalSettings` keys it pulls exactly five from the runtime
+(`getRuntimeBackedStoredSettings`); `theme` and every `experimental*` flag are not among them.
+So for the tile, `orca-data.json` governs almost nothing — settings live per-browser,
+per-origin, on the user's own machine, where Terraform and Coder cannot reach them.
+
+**Fix:** a shared allowlist (`src/shared/runtime-seeded-settings.ts`) of appearance +
+experimental keys that `settings.get` now returns, which the web client adopts **exactly
+once** — on a browser's first visit, when localStorage holds no settings blob. Read side only;
+the write path is untouched.
+
+**Defaults, not policy.** Nothing is written back to the runtime and nothing is re-imposed on
+later loads, so "the workspace decided" never fights "the user decided". Boundary: LOOK and
+CAPABILITY seed from the runtime; SIZE and ERGONOMICS (zoom, window bounds, font sizes) stay
+per-device — the same runtime is driven from a laptop, a monitor and a phone. Credentials
+(`codexManagedAccounts`, `opencodeSessionCookie`, …) sit in the same object and are excluded.
+Both exclusions are test-enforced, not review-enforced.
+
+Full evidence trail: [docs/settings-provisioning/](../../docs/settings-provisioning/README.md).
 
 ## 0006 — web-client floating-workspace directory picker
 
