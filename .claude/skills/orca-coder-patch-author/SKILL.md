@@ -7,7 +7,7 @@ paths: apps/orca-coder/**
 # orca-coder — author a patch
 
 orca-coder = patched upstream Orca → Linux AppImage. `apps/orca-coder/patches/` is a series of
-`git diff`s applied in filename order on pristine `v1.4.153`. **Author in the fork, never in this
+`git diff`s applied in filename order on pristine `v1.4.155`. **Author in the fork, never in this
 repo.** Invariants you must respect: `apps/orca-coder/CLAUDE.md`. History: `apps/orca-coder/CHANGELOG.md`.
 
 Paths are operator-relative — resolve these on your machine:
@@ -28,7 +28,7 @@ Each patch = diff between consecutive feature-boundary commits on the fork branc
 | 0005 web CLI registration | `4cb98816b → 1c7f9328a` |
 | 0006 web floating-workspace dir picker | `1c7f9328a → 704608cf1` |
 | 0007 runtime-seeded settings | `704608cf1 → f8c81885b` |
-| 0008 open-in browser editor URLs | `f8c81885b → 9575a6e7d` |
+| 0008 open-in browser editor URLs | `f8c81885b → a3f814cb5` |
 | next | `<prev-boundary> → <new-commit>` → `0009-…` |
 
 ⚠️ **0000 is an upstream bugfix, not an orca-coder capability** — see `apps/orca-coder/CLAUDE.md` §3.

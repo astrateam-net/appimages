@@ -211,6 +211,84 @@ index ea54d1d24..77ff9131a 100644
          style={{ borderRadius: 2 }}
        />
      )
+diff --git a/src/shared/open-in-applications.test.ts b/src/shared/open-in-applications.test.ts
+index 5589d2d18..68e0906c5 100644
+--- a/src/shared/open-in-applications.test.ts
++++ b/src/shared/open-in-applications.test.ts
+@@ -45,6 +45,44 @@ describe('normalizeOpenInApplications', () => {
+     ])
+   })
+ 
++  // Why these four: this normalizer guards the store on load AND on every settings write, so a
++  // rule here that requires `command` deletes browser-editor entries on the next launch rather
++  // than rejecting them visibly.
++  it('keeps a URL entry that has no command', () => {
++    expect(
++      normalizeOpenInApplications([
++        { id: 'code-server', label: 'code-server', url: 'https://cs.example.com/?folder={path}' }
++      ])
++    ).toEqual([
++      {
++        id: 'code-server',
++        label: 'code-server',
++        command: '',
++        url: 'https://cs.example.com/?folder={path}'
++      }
++    ])
++  })
++
++  it('preserves url on an entry that has both', () => {
++    expect(
++      normalizeOpenInApplications([
++        { id: 'x', label: 'X', command: 'code', url: 'https://e.com/?folder={path}' }
++      ])
++    ).toEqual([{ id: 'x', label: 'X', command: 'code', url: 'https://e.com/?folder={path}' }])
++  })
++
++  it('omits the url key entirely on a plain command entry', () => {
++    const [row] = normalizeOpenInApplications([{ id: 'x', label: 'X', command: 'code' }])
++    expect(Object.hasOwn(row, 'url')).toBe(false)
++  })
++
++  it('still drops an entry with neither command nor url', () => {
++    expect(normalizeOpenInApplications([{ id: 'x', label: 'X' }])).toEqual([])
++    expect(normalizeOpenInApplications([{ id: 'x', label: 'X', command: '  ', url: ' ' }])).toEqual(
++      []
++    )
++  })
++
+   it('seeds defaults only when the persisted field is missing', () => {
+     expect(normalizeOpenInApplications(undefined, { seedDefaults: true })).toEqual(
+       DEFAULT_OPEN_IN_APPLICATIONS
+diff --git a/src/shared/open-in-applications.ts b/src/shared/open-in-applications.ts
+index ace0f526b..9a8fe9d1b 100644
+--- a/src/shared/open-in-applications.ts
++++ b/src/shared/open-in-applications.ts
+@@ -39,7 +39,12 @@ export function normalizeOpenInApplications(
+ 
+     const label = normalizeToken((row as { label?: unknown }).label)
+     const command = normalizeToken((row as { command?: unknown }).command)
+-    if (!label || !command) {
++    // Why a URL alone is enough: an entry needs SOMETHING to open, but a browser-editor entry
++    // has no command to run — the path goes to whoever serves the URL. Requiring `command` here
++    // silently discarded those entries on every load and every settings write, since this
++    // normalizer guards the store on both sides.
++    const url = normalizeToken((row as { url?: unknown }).url)
++    if (!label || (!command && !url)) {
+       continue
+     }
+ 
+@@ -55,7 +60,9 @@ export function normalizeOpenInApplications(
+       continue
+     }
+     seenIds.add(id)
+-    normalized.push({ id, label, command })
++    // Why url is spread conditionally: the field is optional, and writing `url: undefined` into
++    // a command entry would round-trip through the JSON store as a key that was never asked for.
++    normalized.push(url ? { id, label, command, url } : { id, label, command })
+   }
+ 
+   return normalized
 diff --git a/src/shared/open-in-url-template.test.ts b/src/shared/open-in-url-template.test.ts
 new file mode 100644
 index 000000000..b4a9bcee1
