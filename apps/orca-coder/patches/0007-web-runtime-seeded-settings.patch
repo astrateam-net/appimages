@@ -71,12 +71,17 @@ index aed73db96..8f5f84619 100644
      return next
 diff --git a/src/shared/runtime-seeded-settings.test.ts b/src/shared/runtime-seeded-settings.test.ts
 new file mode 100644
-index 000000000..1317247ce
+index 000000000..d9ea88c91
 --- /dev/null
 +++ b/src/shared/runtime-seeded-settings.test.ts
-@@ -0,0 +1,77 @@
+@@ -0,0 +1,114 @@
 +import { describe, expect, it } from 'vitest'
 +import { RUNTIME_SEEDED_SETTING_KEYS, pickRuntimeSeededSettings } from './runtime-seeded-settings'
++import {
++  normalizeLeftSidebarAppearanceMode,
++  normalizeLeftSidebarTintColor,
++  normalizeLeftSidebarTintOpacity
++} from './left-sidebar-appearance'
 +
 +// Why: this list is handed to every client that opens the tile. A credential landing on it
 +// would be an exfiltration path, and a per-device key would fight the user's own choice on
@@ -142,6 +147,38 @@ index 000000000..1317247ce
 +    expect(picked).toEqual({ agentHibernationIdleMs: 60_000 })
 +  })
 +
++  // Why compare against the normalizers instead of hard-coding '#18181b' and 0.35: those two
++  // functions are the app's definition of a legal tint, and a literal here would just be a third
++  // copy of the rule — the same restating that let 'not-a-color' and 999 reach every fresh
++  // browser's settings blob, values the settings UI itself cannot produce.
++  it('seeds sidebar tint values the app could actually have produced', () => {
++    const picked = pickRuntimeSeededSettings({
++      leftSidebarAppearanceMode: 'chartreuse',
++      leftSidebarTintColor: 'not-a-color',
++      leftSidebarTintOpacity: 999
++    })
++
++    expect(picked).toEqual({
++      leftSidebarAppearanceMode: normalizeLeftSidebarAppearanceMode('chartreuse'),
++      leftSidebarTintColor: normalizeLeftSidebarTintColor('not-a-color'),
++      leftSidebarTintOpacity: normalizeLeftSidebarTintOpacity(999)
++    })
++  })
++
++  it('passes legal tint values through untouched', () => {
++    expect(
++      pickRuntimeSeededSettings({
++        leftSidebarAppearanceMode: 'tinted',
++        leftSidebarTintColor: '#0af',
++        leftSidebarTintOpacity: 0.2
++      })
++    ).toEqual({
++      leftSidebarAppearanceMode: 'tinted',
++      leftSidebarTintColor: '#0af',
++      leftSidebarTintOpacity: 0.2
++    })
++  })
++
 +  it('skips absent keys so an older runtime leaves stock defaults alone', () => {
 +    expect(pickRuntimeSeededSettings({ theme: undefined })).toEqual({})
 +  })
@@ -154,12 +191,17 @@ index 000000000..1317247ce
 +})
 diff --git a/src/shared/runtime-seeded-settings.ts b/src/shared/runtime-seeded-settings.ts
 new file mode 100644
-index 000000000..b17b6f1b0
+index 000000000..8159c75cc
 --- /dev/null
 +++ b/src/shared/runtime-seeded-settings.ts
-@@ -0,0 +1,83 @@
+@@ -0,0 +1,93 @@
 +import { z } from 'zod'
 +import { normalizeAppIconId } from './app-icon'
++import {
++  normalizeLeftSidebarAppearanceMode,
++  normalizeLeftSidebarTintColor,
++  normalizeLeftSidebarTintOpacity
++} from './left-sidebar-appearance'
 +import { normalizeUiLanguage } from './ui-language'
 +import type { GlobalSettings } from './types'
 +
@@ -192,9 +234,14 @@ index 000000000..b17b6f1b0
 +  appIcon: z.unknown().transform(normalizeAppIconId),
 +  appFontFamily: z.string(),
 +  uiLanguage: z.unknown().transform(normalizeUiLanguage),
-+  leftSidebarAppearanceMode: z.enum(['default', 'match-terminal', 'tinted']),
-+  leftSidebarTintColor: z.string(),
-+  leftSidebarTintOpacity: z.number(),
++  // Why these route through the shared normalizers rather than z.enum/z.string/z.number: those
++  // three functions ARE this app's rules for these fields — a hex-format check and a 0…0.35 clamp
++  // the settings UI can never exceed. Restating them loosely let a hand-edited store seed
++  // `'not-a-color'` and `999` into every fresh browser, values the app itself cannot produce.
++  // Same `z.unknown().transform(...)` shape as appIcon and uiLanguage above.
++  leftSidebarAppearanceMode: z.unknown().transform(normalizeLeftSidebarAppearanceMode),
++  leftSidebarTintColor: z.unknown().transform(normalizeLeftSidebarTintColor),
++  leftSidebarTintOpacity: z.unknown().transform(normalizeLeftSidebarTintOpacity),
 +  terminalThemeDark: z.string(),
 +  terminalThemeLight: z.string(),
 +  terminalUseSeparateLightTheme: z.boolean(),
