@@ -288,14 +288,134 @@ index 1d06d46e7..e591d484d 100644
    ...FILE_METHODS,
    ...GIT_METHODS,
    ...GITHUB_METHODS,
+diff --git a/src/renderer/src/web/web-agent-status-pane-key.test.ts b/src/renderer/src/web/web-agent-status-pane-key.test.ts
+new file mode 100644
+index 000000000..2ee4013b8
+--- /dev/null
++++ b/src/renderer/src/web/web-agent-status-pane-key.test.ts
+@@ -0,0 +1,65 @@
++import { describe, expect, it } from 'vitest'
++import type { AgentStatusIpcPayload } from '../../../shared/agent-status-types'
++import { makePaneKey } from '../../../shared/stable-pane-id'
++import { toWebTerminalSurfaceTabId } from '../../../shared/terminal-surface-id'
++import { toWebSurfaceAgentStatusRow, toWebSurfacePaneKey } from './web-agent-status-pane-key'
++
++const HOST_TAB_ID = '24f43d36-492f-422e-9472-3b179975ee69'
++const LEAF_ID = 'a12b2698-61c1-4cc5-b330-99c7b945f327'
++const HOST_PANE_KEY = `${HOST_TAB_ID}:${LEAF_ID}`
++
++describe('web agent-status pane key translation', () => {
++  it('maps a host pane key onto the key the web client mirrors that surface under', () => {
++    // Why: this is the whole bug. The runtime hands the browser a row keyed by ORCA_PANE_KEY,
++    // the renderer only has `web-terminal-<hostTabId>:<leafId>`, and the mismatch is silent —
++    // applyAgentStatus returns 'dropped' and the chat view shows its empty state.
++    expect(toWebSurfacePaneKey(HOST_PANE_KEY)).toBe(
++      makePaneKey(toWebTerminalSurfaceTabId(HOST_TAB_ID), LEAF_ID)
++    )
++  })
++
++  it('agrees with how web-session-tabs-sync mirrors a surface', () => {
++    // Why: the two must not drift — that sync module is what actually creates the tabs the
++    // translated key has to land on (toMirroredPaneKey).
++    const mirrored = makePaneKey(toWebTerminalSurfaceTabId(HOST_TAB_ID), LEAF_ID)
++    expect(mirrored.startsWith('web-terminal-')).toBe(true)
++    expect(toWebSurfacePaneKey(HOST_PANE_KEY)).toBe(mirrored)
++  })
++
++  it('leaves an already web-scoped pane key alone', () => {
++    const webPaneKey = makePaneKey(toWebTerminalSurfaceTabId(HOST_TAB_ID), LEAF_ID)
++    expect(toWebSurfacePaneKey(webPaneKey)).toBe(webPaneKey)
++  })
++
++  it('passes through anything it cannot parse rather than dropping it', () => {
++    expect(toWebSurfacePaneKey('not-a-pane-key')).toBe('not-a-pane-key')
++    expect(toWebSurfacePaneKey('')).toBe('')
++  })
++
++  it('carries providerSession through and re-stamps the companion tabId', () => {
++    // Why: providerSession is the only field native chat reads; tabId must follow paneKey or
++    // consumers reading it attribute the row to a tab that does not exist in this client.
++    const row = {
++      paneKey: HOST_PANE_KEY,
++      tabId: HOST_TAB_ID,
++      state: 'done',
++      agentType: 'claude',
++      providerSession: {
++        key: 'session_id',
++        id: '582f66ac-ab96-4105-a762-8075fbf0f35d',
++        transcriptPath: '/home/coder/.claude/projects/x/582f66ac.jsonl'
++      }
++    } as unknown as AgentStatusIpcPayload
++
++    const mapped = toWebSurfaceAgentStatusRow(row)
++
++    expect(mapped.paneKey).toBe(makePaneKey(toWebTerminalSurfaceTabId(HOST_TAB_ID), LEAF_ID))
++    expect(mapped.tabId).toBe(toWebTerminalSurfaceTabId(HOST_TAB_ID))
++    expect(mapped.providerSession).toEqual(row.providerSession)
++  })
++
++  it('returns the same object when no translation applies', () => {
++    const row = { paneKey: 'not-a-pane-key' } as unknown as AgentStatusIpcPayload
++    expect(toWebSurfaceAgentStatusRow(row)).toBe(row)
++  })
++})
+diff --git a/src/renderer/src/web/web-agent-status-pane-key.ts b/src/renderer/src/web/web-agent-status-pane-key.ts
+new file mode 100644
+index 000000000..440e9e5f3
+--- /dev/null
++++ b/src/renderer/src/web/web-agent-status-pane-key.ts
+@@ -0,0 +1,42 @@
++import { makePaneKey, parsePaneKey } from '../../../shared/stable-pane-id'
++import {
++  isWebTerminalSurfaceTabId,
++  toWebTerminalSurfaceTabId
++} from '../../../shared/terminal-surface-id'
++import type { AgentStatusIpcPayload } from '../../../shared/agent-status-types'
++
++// Why: hook rows are stamped with the host's own pane key (`ORCA_PANE_KEY`, i.e.
++// `<hostTabId>:<leafId>`), but the web client mirrors every host terminal under
++// `toWebTerminalSurfaceTabId(parentTabId)` — see `toMirroredPaneKey` in
++// web-session-tabs-sync.ts. So a row that is correct on the wire still resolves to no tab in
++// `resolvePaneKey`, and `applyAgentStatus` drops it before `providerSession` ever reaches the
++// store. Native chat resolves its session id + transcript path from that field alone, so the
++// chat view renders its "Start a chat with <agent>" empty state with nothing logged anywhere.
++// Translate on the way in, using upstream's own surface-id helpers rather than restating them.
++
++/** Host pane key -> the pane key the web client mirrors that surface under. Returns the input
++ *  unchanged when it is already web-surface-scoped or is not a parseable pane key. */
++export function toWebSurfacePaneKey(hostPaneKey: string): string {
++  const parsed = parsePaneKey(hostPaneKey)
++  if (!parsed || isWebTerminalSurfaceTabId(parsed.tabId)) {
++    return hostPaneKey
++  }
++  try {
++    return makePaneKey(toWebTerminalSurfaceTabId(parsed.tabId), parsed.leafId)
++  } catch {
++    // Why: makePaneKey rejects non-UUID leaf ids; a row we cannot map is left as-is rather than
++    // dropped, so a future host surface shape degrades to today's behaviour instead of vanishing.
++    return hostPaneKey
++  }
++}
++
++/** Same translation applied to a whole hook row, including the `tabId` companion field so
++ *  consumers reading it (agent dashboard, tab attribution) stay consistent with `paneKey`. */
++export function toWebSurfaceAgentStatusRow(entry: AgentStatusIpcPayload): AgentStatusIpcPayload {
++  const paneKey = toWebSurfacePaneKey(entry.paneKey)
++  if (paneKey === entry.paneKey) {
++    return entry
++  }
++  const tabId = parsePaneKey(paneKey)?.tabId
++  return { ...entry, paneKey, ...(tabId ? { tabId } : {}) }
++}
 diff --git a/src/renderer/src/web/web-preload-api.ts b/src/renderer/src/web/web-preload-api.ts
-index 82ef2728d..b42a0cd51 100644
+index 82ef2728d..f4292d401 100644
 --- a/src/renderer/src/web/web-preload-api.ts
 +++ b/src/renderer/src/web/web-preload-api.ts
-@@ -146,6 +146,10 @@ import {
+@@ -146,6 +146,11 @@ import {
    parseRuntimeNativeChatTurnLifecycle
  } from '@/components/native-chat/native-chat-runtime-contract'
  import { createWebFileMutationMethods } from './web-file-mutation-methods'
++import { toWebSurfaceAgentStatusRow } from './web-agent-status-pane-key'
 +import type {
 +  AgentStatusClearIpcPayload,
 +  AgentStatusIpcPayload
@@ -303,7 +423,7 @@ index 82ef2728d..b42a0cd51 100644
  
  const SETTINGS_STORAGE_KEY = 'orca.web.settings.v1'
  const UI_STORAGE_KEY = 'orca.web.ui.v1'
-@@ -851,9 +855,7 @@ function createWebPreloadApi(): Partial<PreloadApi> {
+@@ -851,9 +856,7 @@ function createWebPreloadApi(): Partial<PreloadApi> {
        isAvailable: () => callRuntimeResult<boolean>('host.gitBash.isAvailable').catch(() => false)
      },
      agentStatus: {
@@ -314,7 +434,7 @@ index 82ef2728d..b42a0cd51 100644
        inferInterrupt: () => Promise.resolve(false),
        inferQuestionAnswered: () => Promise.resolve(false),
        onMigrationUnsupported: () => noopUnsubscribe,
-@@ -1265,6 +1267,113 @@ function createWebKeybindingsApi(): WebKeybindingsApi {
+@@ -1265,6 +1268,114 @@ function createWebKeybindingsApi(): WebKeybindingsApi {
    }
  }
  
@@ -334,7 +454,8 @@ index 82ef2728d..b42a0cd51 100644
 +  let handle: { unsubscribe: () => void } | null = null
 +  let cancelled = false
 +
-+  const applySnapshot = (entries: AgentStatusIpcPayload[]): void => {
++  const applySnapshot = (rows: AgentStatusIpcPayload[]): void => {
++    const entries = rows.map(toWebSurfaceAgentStatusRow)
 +    const next = new Map<string, string>()
 +    for (const entry of entries) {
 +      const serialized = JSON.stringify(entry)
@@ -404,7 +525,7 @@ index 82ef2728d..b42a0cd51 100644
 +      const result = await callRuntimeResult<{ entries?: AgentStatusIpcPayload[] }>(
 +        'agentStatus.getSnapshot'
 +      ).catch(() => ({ entries: [] }))
-+      return Array.isArray(result?.entries) ? result.entries : []
++      return Array.isArray(result?.entries) ? result.entries.map(toWebSurfaceAgentStatusRow) : []
 +    },
 +    onSet: (callback) => {
 +      setListeners.add(callback)

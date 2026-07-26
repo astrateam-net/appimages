@@ -55,7 +55,26 @@ state); **0004**/**0005** (same route-a-stub shape, unrelated symbols). The patc
 `web-preload-api.ts` share the hub file only, which decides nothing. Cross-checked against
 `orca-pristine`: `subscribeStatusChanges`, `getStatusSnapshot` and `enrichAgentStatusIpcPayload` all
 exist upstream and are reused; `AGENT_STATUS_METHODS` is the only genuinely new symbol.
-**Acceptance:** `rpc/methods/agent-status.test.ts`, `mobile-rpc-allowlist.test.ts`
+**Fixed 2026-07-27 (same patch, boundary amended):** the bridge shipped and the symptom did not
+move — the chat view still showed "Start a chat with Claude". The rows were never the problem:
+`agentStatus.getSnapshot()` in the tile returned all six hook rows with correct `providerSession`.
+They arrive stamped with the host's own pane key (`ORCA_PANE_KEY`, `<hostTabId>:<leafId>`), but the
+web client mirrors every host terminal under `toWebTerminalSurfaceTabId(parentTabId)` — so the
+renderer's pane is `web-terminal-<hostTabId>:<leafId>` and `resolvePaneKey` finds no tab.
+`applyAgentStatus` returns `'dropped'`, silently, and `providerSession` never reaches the store.
+Measured live: hook row `cb5db10b-…:07996bf7-…` vs `ORCA_PANE_KEY`, `orca terminal list` and the
+renderer store all agreeing on `24f43d36-…:a12b2698-…`; on a native Mac the two match exactly,
+which is why desktop was unaffected. The single store entry the tile did hold came from the web
+PTY's own OSC 9999 stream, carrying `state`/`agentType` but never a session id — hence a sidebar
+row reading `Done - Claude` beside a chat pane that had no conversation, and an empty model picker.
+The fix translates at the preload boundary (`web-agent-status-pane-key.ts`, a leaf so the
+translation is unit-testable and the value imports stay out of the hub file), reusing upstream's
+`toWebTerminalSurfaceTabId` + `makePaneKey` rather than restating the mapping. Not fixed on the
+session-tabs channel: `buildHeadlessMobileSessionTerminalTabs` omits `agentStatus` entirely under
+serve, and that payload is mobile-allowlisted — filling it would ship transcript paths to phones,
+which this patch deliberately avoids.
+**Acceptance:** `rpc/methods/agent-status.test.ts`, `mobile-rpc-allowlist.test.ts`,
+`web/web-agent-status-pane-key.test.ts`
 
 ## 0010 — bridge usage analytics to the web client
 

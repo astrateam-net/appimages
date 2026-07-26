@@ -183,6 +183,16 @@ re-mint every boot. Phones therefore survive restarts. Tokens are never echoed; 
   value must mean something different for the web client, resolve it **at the consumer**, never by
   redefining what the stored absence means. (The `0013` import-cycle entry below is the same shape:
   the damage was invisible because the patch's own tests stayed green.)
+- **The web client's pane keys are a different namespace from the host's — translate, never
+  forward.** The renderer mirrors every host terminal under
+  `makePaneKey(toWebTerminalSurfaceTabId(parentTabId), leafId)`, so its panes read
+  `web-terminal-<hostTabId>:<leafId>` while anything host-stamped (`ORCA_PANE_KEY`, hook rows,
+  `orca terminal list`) reads `<hostTabId>:<leafId>`. A bridge that forwards host-keyed rows
+  verbatim is **silently** inert: `resolvePaneKey` finds no tab and `applyAgentStatus` returns
+  `'dropped'` with nothing logged, so the wire looks healthy and the feature stays dead. `0011`
+  shipped exactly that and did not move its symptom. Any new host→renderer identity goes through
+  upstream's surface-id helpers. Desktop cannot reproduce it — there the two keys are equal, so
+  "works on my Mac" says nothing here.
 - **Moving a decision from a synchronous source to store state inherits a hydration window.**
   `state.runtimeEnvironments` is filled fire-and-forget at boot (`fetchSettings` →
   `void hydrateRuntimeEnvironmentStatuses()`), so until it lands the catalog is `[]` — and for the
