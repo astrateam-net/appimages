@@ -17,6 +17,60 @@ throw-on-call. Most "works on desktop, dead in the tile" reports are one of thos
 
 ---
 
+## 0013 — bridge usage analytics to the web client
+
+`patches/0013-web-usage-analytics-bridge.patch`
+
+**Symptom:** Settings → Stats & Usage sat on "Not scanned yet" in the tile and the Enable
+Claude/Codex/OpenCode buttons did nothing at all — no error, no effect. The same build on a Mac
+shows the full ledger.
+
+**Cause:** `window.api.<provider>Usage.*` is desktop-only IPC. It is not in the web preload, so it
+fell through `createFallbackProxy`, where every call resolves to `undefined`. Upstream's `#10073`
+("guard web client against undefined usage scan state") fixed the resulting `TypeError` and left
+the gap — turning a missing bridge into a silent no-op.
+
+**Fix:** a `usage.*` RPC family (eight methods, provider as a parameter) over the stores that
+already run under `orca serve`, and three real preload namespaces instead of the fallback. Nothing
+about scanning changed: the logs, the scanners and the stores were always on the host — only the
+pipe was missing. Grok is untouched; it is subscription rate-limit data behind
+`rateLimits.*`/`grokAccounts.*`, which the web preload already implements. `setEnabled` mutates the
+host, so all eight stay out of `MOBILE_RPC_METHOD_ALLOWLIST` — test-enforced.
+
+## 0012 — finish the web client's local-fallback floor
+
+`patches/0012-web-local-fallback-completion.patch`
+
+**Symptom:** with `0009` shipped, the Settings skill terminal still toasted "Local PTYs are
+unavailable in the web client", and New Markdown failed with "No runtime worktree owns
+`<floating>/.orca/templates`".
+
+**Cause:** `0009` put a floor under the IPC fallback in `pty-connection.ts`, but three paths never
+reach it — ephemeral setup terminals route through `getSingleFocusedRuntimeEnvironmentId`
+(which falls back to local), `getSettingsForWorktreeRuntimeOwner` serves callers that spawn PTYs
+directly, and the floating workspace is a real directory that path→worktree resolution never
+accepts.
+
+**Fix:** the same floor at those three sites, plus a synthetic worktree record for the floating
+directory — the one the runtime already answers the sentinel with.
+
+## 0011 — pin the web client's active runtime
+
+`patches/0011-web-active-runtime-pin.patch`
+
+**Symptom:** a freshly paired tile showed its server as **Connected** while the skill terminal, the
+floating terminal and floating markdown notes all failed as if no runtime existed.
+
+**Cause:** every web-client ownership decision reads `settings.activeRuntimeEnvironmentId`, and
+nothing sets it. Its only writer is the Active Server selector, folded away under *Advanced* in
+Remote Orca Servers. "Connected" is reachability; "active" is a stored preference — two different
+things, and only the second one drives ownership.
+
+**Fix:** default the field to the paired environment. The web client stores exactly one
+(`readStoredWebRuntimeEnvironment` is singular, `resolveEnvironment` refuses any other selector), so
+for a browser the runtime itself serves this is a fact, not a preference. It stays a default: an
+explicit choice — including an explicit null — still wins.
+
 ## 0010 — deliver orchestration messages on a headless host
 
 `patches/0010-web-headless-orchestration-delivery.patch`
