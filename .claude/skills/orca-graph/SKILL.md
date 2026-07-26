@@ -1,24 +1,27 @@
 ---
 name: orca-graph
 description: >-
-  Query the Orca fork's code graph instead of grepping `.upstream/orcaide-v2` — who calls a function,
-  what a resolver fans out to, where an RPC namespace is handled, which stub is unwired, and whether
-  a symbol is ours or upstream's. Reach for this before Grep or Glob over the fork. Two graphs:
-  orca-fork (patched) and orca-pristine (bare tag).
+  Answer any question about Orca SOURCE from a queryable code graph instead of grepping
+  `.upstream/orcaide-v2`. Use it BEFORE Grep, Glob, or reading files in the fork — one
+  `trace_path` call returns every caller, where grep needs a dozen passes and still misses
+  renamed namespaces. Two indexed graphs: `orca-fork` (build tag + our patch series) and
+  `orca-pristine` (the bare tag), so it also answers whether a symbol is ours or upstream's.
 when_to_use: >-
-  Any question about Orca SOURCE, especially "enumerate every caller" or "is this ours or upstream's".
-  Sister skill orca-wiki covers upstream DOCS; this one covers code.
+  Whenever you are about to search the Orca fork. Triggers: "find where X is defined", "search
+  the fork for", "grep for", "who calls X", "what calls into", "all usages/references of",
+  "where is this handled", "what does X call", "is this wired up", "which stub is missing an
+  RPC", "did upstream already implement this", "is this symbol ours or upstream's", "what would
+  this patch touch", "enumerate every producer/writer/call site". Also when a claim needs the
+  full set rather than the first hit — the contract requires enumerating every producer before
+  concluding one does not exist, and grep silently under-reports. Sister skill `orca-wiki`
+  covers upstream DOCS (how Orca is meant to work); this one covers CODE.
 ---
 
 # Orca fork code graph (local codebase-memory-mcp index)
 
-`apps/orca-coder/CLAUDE.md` demands things grep does badly: *"enumerate every producer before
-concluding one doesn't exist"*, *"fix at the resolver, not the call site"*, *"a map with ten
-`.set(…)` call sites is not characterized by the first one you open"*. Those are graph queries.
-
-Local-only setup, deliberately outside the repo contract — binary pinned in `mise.local.toml`,
-server in `.mcp.json`, both excluded via `.git/info/exclude`. Never cite the graph from a
-committed `CLAUDE.md`; other clones and CI do not have it.
+Local-only: binary in `mise.local.toml`, server in `.mcp.json`, both git-excluded. **Never cite the
+graph from a committed file** — other clones and CI do not have it (`CLAUDE.md` §0 invariant 6).
+The enumeration rules this exists to serve are in `orca-coder-patch-author`.
 
 ## Two graphs
 
