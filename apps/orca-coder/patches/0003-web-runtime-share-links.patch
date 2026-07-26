@@ -1,8 +1,8 @@
 diff --git a/src/main/runtime/mobile-rpc-allowlist.test.ts b/src/main/runtime/mobile-rpc-allowlist.test.ts
-index 4c477dc0b..84e5e0fd4 100644
+index d5022cec7..c795f2c8c 100644
 --- a/src/main/runtime/mobile-rpc-allowlist.test.ts
 +++ b/src/main/runtime/mobile-rpc-allowlist.test.ts
-@@ -139,9 +139,16 @@ describe('mobile RPC allowlist', () => {
+@@ -140,9 +140,16 @@ describe('mobile RPC allowlist', () => {
      // allowlist is the first line and must never regress.
      const allowed = mobileRpcAllowlist()
      expect(
@@ -169,10 +169,10 @@ index 4a9fdbc39..8727b3dc9 100644
    })
  ]
 diff --git a/src/main/runtime/runtime-rpc.ts b/src/main/runtime/runtime-rpc.ts
-index 4687d307b..483dd4a77 100644
+index c90b92b18..943d45e6b 100644
 --- a/src/main/runtime/runtime-rpc.ts
 +++ b/src/main/runtime/runtime-rpc.ts
-@@ -766,7 +766,46 @@ export class OrcaRuntimeRpcServer {
+@@ -777,7 +777,46 @@ export class OrcaRuntimeRpcServer {
              lastSeenAt: d.lastSeenAt
            }))
        }),
@@ -221,7 +221,7 @@ index 4687d307b..483dd4a77 100644
    }
  
 diff --git a/src/renderer/src/components/settings/RuntimeEnvironmentsPane.tsx b/src/renderer/src/components/settings/RuntimeEnvironmentsPane.tsx
-index 54184982e..87f738559 100644
+index 5012fedae..f2357568a 100644
 --- a/src/renderer/src/components/settings/RuntimeEnvironmentsPane.tsx
 +++ b/src/renderer/src/components/settings/RuntimeEnvironmentsPane.tsx
 @@ -47,6 +47,7 @@ import {
@@ -232,7 +232,7 @@ index 54184982e..87f738559 100644
  import { EphemeralVmRuntimesSection } from './EphemeralVmRuntimesSection'
  import {
    getRuntimeEnvironmentsSearchEntry,
-@@ -1272,16 +1273,26 @@ export function RuntimeEnvironmentsPane({
+@@ -1238,16 +1239,26 @@ export function RuntimeEnvironmentsPane({
          <div className="space-y-3 pt-2">
            <div className="space-y-0.5">
              <div className="text-sm font-medium">
@@ -317,13 +317,13 @@ index 5557f6176..30c39b0bb 100644
            <Button
              type="button"
 diff --git a/src/renderer/src/components/settings/Settings.tsx b/src/renderer/src/components/settings/Settings.tsx
-index 3f80e1b31..21cf31773 100644
+index ac0578fa3..d453ebaf5 100644
 --- a/src/renderer/src/components/settings/Settings.tsx
 +++ b/src/renderer/src/components/settings/Settings.tsx
-@@ -1613,7 +1613,10 @@ function Settings(): React.JSX.Element {
+@@ -1615,7 +1615,10 @@ function Settings(): React.JSX.Element {
                      <RuntimeEnvironmentsPane
                        settings={settings}
-                       switchRuntimeEnvironment={switchRuntimeEnvironment}
+                       setActiveRuntimeEnvironmentPreference={setActiveRuntimeEnvironmentPreference}
 -                      canGeneratePairingUrl={!isWebClient}
 +                      // Why: in web the section shares the CONNECTED workspace
 +                      // server (runtime-RPC mint, patch 0003) — the browser
@@ -333,10 +333,10 @@ index 3f80e1b31..21cf31773 100644
                        addServerIntentSignal={remoteServerAddIntentSignal}
                      />
 diff --git a/src/renderer/src/web/web-preload-api.ts b/src/renderer/src/web/web-preload-api.ts
-index 4cb7d126b..d38660e0b 100644
+index 4f0c655af..f3f9ca38d 100644
 --- a/src/renderer/src/web/web-preload-api.ts
 +++ b/src/renderer/src/web/web-preload-api.ts
-@@ -850,15 +850,45 @@ function createWebPreloadApi(): Partial<PreloadApi> {
+@@ -865,15 +865,45 @@ function createWebPreloadApi(): Partial<PreloadApi> {
        getWindowsFirewallStatus: () => Promise.resolve({ supported: false }),
        repairWindowsFirewall: () => Promise.resolve({ ok: false, reason: 'unsupported' }),
        openWindowsNetworkSettings: () => Promise.resolve(false),

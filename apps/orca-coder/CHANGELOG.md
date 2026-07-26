@@ -17,6 +17,82 @@ throw-on-call. Most "works on desktop, dead in the tile" reports are one of thos
 
 ---
 
+## Base bump — `v1.4.155` → `v1.4.156`, patch 0000 dropped
+
+Upstream shipped the `DetachedHeadBadge` fix this series had been carrying: `v1.4.156` declares
+`tabIndex?: number` on `DetachedHeadBadgeProps` **and** forwards it to `Badge`. Per CLAUDE.md §3
+that is the condition to delete `0000-upstream-detached-head-badge-tabindex.patch` — the only
+patch in the series that fixed an upstream bug rather than adding an orca-coder capability.
+Keeping it would fail `git apply` and break the build.
+
+The rebase (`--onto v1.4.156 <0000-boundary>`) needed two conflict resolutions:
+`switchRuntimeEnvironment` → `setActiveRuntimeEnvironmentPreference` (0003), and the folder-workspace
+helpers moving out of `worktree-runtime-owner.ts` into `folder-workspace-runtime-owner.ts` (0009).
+
+One upstream test (`project-view-wrapper-source-context-boundary`) fails under full-suite parallel
+load. Verified pre-existing: it fails on **pristine `v1.4.156` with zero patches**, and pristine
+`v1.4.155` fails 14 tests on the same suite. Not ours, and the bump improves it.
+
+## 0009 — the floating workspace runs on the connected runtime
+
+`patches/0009-web-floating-workspace-runtime-owner.patch`
+
+**Symptom:** in the tile, the floating workspace could not open a terminal (*"Local PTYs are
+unavailable in the web client"*), a note (New/Open Markdown Note did nothing at all, no error), or
+a browser (chrome rendered over a blank page). Launching Claude/Codex from the tab-create menu
+failed with *"No renderer window available"*. A just-created project's terminal failed until the
+browser was reloaded.
+
+**Cause:** one shape in five places — code that reads *"not a named runtime"* as *"therefore this
+machine"*, which is true for a desktop app and never true for a browser the runtime is serving.
+`getRuntimeEnvironmentIdForWorktree` returns `null` unconditionally for the floating sentinel
+(`getExecutionHostIdForWorktree` `'local'`), so the pane took `createIpcPtyTransport` →
+`window.api.pty.spawn`, a rejecting stub whose message *is* the toast. The browser passed
+`browserRuntimeEnvironmentId: null`, which maps to `LOCAL_EXECUTION_HOST_ID` — a pane with no
+`<webview>` to back it. `getFloatingMarkdownDirectory` stubs to `''`, and the panel reads a falsy
+directory as "nowhere to put a note" and returns silently. `editor-file-operation-owner` pinned
+the same sentinel to `'local'` for file reads/writes. And `createTerminal` gated its headless
+branch on `!requiresRendererFocus`, so a *focused* create fell through to `getAuthoritativeWindow()`
+and threw.
+
+**Fix:** ownership is one predicate (`floating-workspace-runtime-owner`) — local on desktop, the
+connected runtime in the web client, which `mergeSettings` already pins to the environment that
+served the page. Patch 0006 had already asserted this ("the tile's floating terminals run on the
+connected server") when it moved the floating cwd onto the host; this is the other half. Terminal,
+browser and the setup/default-tab automations all route through
+`getRuntimeEnvironmentIdForWorktree`, so fixing it there carried all three onto runtime paths that
+already existed. Also: focused creates now take the background branch (which already honors
+`presentation === 'focused'` via `notifier.revealTerminalSession`); `floatingWorkspace.markdownDirectory`
+joins 0006's family reusing `ensureDefaultFloatingWorkspacePath`, out of `MOBILE_RPC_METHOD_ALLOWLIST`
+like its siblings, test-enforced; `RemoteFileBrowser` gained an opt-in `selectableFileExtensions`
+mode so Open Markdown Note uses the same host-fs picker as *Add a project* (omit the prop and that
+flow is unchanged); and `suppressActiveRuntimeFallback` now follows the app's own
+`owner === null` idiom instead of a hardcoded `true`.
+
+**The runtime needed no changes.** `resolveTerminalWorkspaceLaunchScope` already answers the
+floating sentinel with the home dir, and `browser.tabCreate`'s `worktree` is optional — the new
+`toRuntimeBrowserWorktreeSelector` omits it for the sentinel, which is terminal-only on the runtime
+and would otherwise throw in `resolveWorktreeSelector`.
+
+**Silent failure worth noting:** `launchWorktreeBackgroundTerminals` returns early for
+runtime-owned worktrees so the server materializes setup scripts and default tabs. When ownership
+came out local it fell through to `pty.spawn` — default tabs swallowed by a `console.warn`, setup
+scripts thrown. Nobody had reported it.
+
+**Floors, not diagnoses:** the terminal and browser now address the connected runtime when
+ownership resolves local in a web client, rather than a rejecting stub / dead pane. Ownership
+failing for *ordinary* worktrees is a real open bug (blank browser, *"Couldn't verify which host
+owns this file"*, "No files in this workspace" — one missing answer, three surfaces). The editor
+cannot be floored; it fails closed by design. See `docs/web-client-local-fallbacks/README.md` §9.
+
+Touch points: `lib/floating-workspace-runtime-owner.ts` (new), `lib/worktree-runtime-owner.ts`,
+`lib/editor-file-operation-owner.ts`, `lib/floating-workspace-tab-creation.ts`,
+`components/floating-terminal/FloatingTerminalPanel.tsx`, `components/sidebar/RemoteFileBrowser.tsx`,
+`components/terminal-pane/pty-connection.ts`, `store/slices/browser.ts`,
+`runtime/runtime-worktree-selector.ts`, `runtime/web-runtime-session.ts`, `web/web-preload-api.ts`,
+`lib/web-client-location.ts`, `main/runtime/orca-runtime.ts`,
+`main/runtime/rpc/methods/floating-workspace.ts`, `main/runtime/mobile-rpc-allowlist.test.ts`.
+
 ## 0008 — open a worktree in a browser editor
 
 `patches/0008-web-open-in-browser-editor-urls.patch`

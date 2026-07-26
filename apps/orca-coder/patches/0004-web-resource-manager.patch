@@ -1,8 +1,8 @@
 diff --git a/src/renderer/src/web/web-preload-api.ts b/src/renderer/src/web/web-preload-api.ts
-index d38660e0b..e48ad3485 100644
+index f3f9ca38d..a5a43dced 100644
 --- a/src/renderer/src/web/web-preload-api.ts
 +++ b/src/renderer/src/web/web-preload-api.ts
-@@ -761,7 +761,15 @@ function createWebPreloadApi(): Partial<PreloadApi> {
+@@ -770,7 +770,15 @@ function createWebPreloadApi(): Partial<PreloadApi> {
          }))
      },
      memory: {

@@ -67,10 +67,10 @@ index bf1373e9f..5851fe497 100644
  ): Promise<string> {
    const trimmed = dirPath.trim()
 diff --git a/src/main/runtime/mobile-rpc-allowlist.test.ts b/src/main/runtime/mobile-rpc-allowlist.test.ts
-index 397fa0981..8c5920029 100644
+index 58d87fd00..0ee5913e0 100644
 --- a/src/main/runtime/mobile-rpc-allowlist.test.ts
 +++ b/src/main/runtime/mobile-rpc-allowlist.test.ts
-@@ -182,4 +182,28 @@ describe('mobile RPC allowlist', () => {
+@@ -183,4 +183,28 @@ describe('mobile RPC allowlist', () => {
      )
      expect(missing).toEqual([])
    })
@@ -100,10 +100,10 @@ index 397fa0981..8c5920029 100644
 +  })
  })
 diff --git a/src/main/runtime/orca-runtime.ts b/src/main/runtime/orca-runtime.ts
-index 92568b4af..1c42b0135 100644
+index 489207295..345c5cac6 100644
 --- a/src/main/runtime/orca-runtime.ts
 +++ b/src/main/runtime/orca-runtime.ts
-@@ -116,6 +116,7 @@ import type {
+@@ -117,6 +117,7 @@ import type {
    GitHubCreateIssueFields,
    GitHubOwnerRepo,
    GlobalSettings,
@@ -111,7 +111,7 @@ index 92568b4af..1c42b0135 100644
    PersistedUIState,
    Project,
    ProjectUpdateArgs,
-@@ -757,6 +758,11 @@ import {
+@@ -765,6 +766,11 @@ import {
  } from '../git/worktree'
  import type { AddWorktreeOptions, AddWorktreeResult } from '../git/worktree'
  import { isENOENT } from '../ipc/filesystem-auth'
@@ -123,7 +123,7 @@ index 92568b4af..1c42b0135 100644
  import {
    createSetupRunnerScript,
    getDefaultTabCommandTrustContent,
-@@ -14571,6 +14577,32 @@ export class OrcaRuntimeService {
+@@ -15184,6 +15190,32 @@ export class OrcaRuntimeService {
      return scanNestedRepos({ path, options: { timeoutMs: 15_000 } })
    }
  
@@ -269,10 +269,10 @@ index 000000000..ee4e41897
 +  })
 +]
 diff --git a/src/main/runtime/rpc/methods/index.ts b/src/main/runtime/rpc/methods/index.ts
-index f713c0b65..63cb33918 100644
+index 52bb0f5fd..bf2a2737d 100644
 --- a/src/main/runtime/rpc/methods/index.ts
 +++ b/src/main/runtime/rpc/methods/index.ts
-@@ -38,6 +38,7 @@ import { PAIRING_METHODS } from './pairing'
+@@ -39,6 +39,7 @@ import { PAIRING_METHODS } from './pairing'
  import { MOBILE_PAIRING_METHODS } from './mobile-pairing'
  import { UPDATER_METHODS } from './updater'
  import { CLI_METHODS } from './cli'
@@ -280,7 +280,7 @@ index f713c0b65..63cb33918 100644
  import { AGENT_SESSION_METHODS } from './agent-session'
  
  // Why: a flat manifest keeps registration order explicit and provides one
-@@ -83,5 +84,6 @@ export const ALL_RPC_METHODS: readonly RpcAnyMethod[] = [
+@@ -85,5 +86,6 @@ export const ALL_RPC_METHODS: readonly RpcAnyMethod[] = [
    ...PAIRING_METHODS,
    ...MOBILE_PAIRING_METHODS,
    ...UPDATER_METHODS,
@@ -289,10 +289,10 @@ index f713c0b65..63cb33918 100644
 +  ...FLOATING_WORKSPACE_METHODS
  ]
 diff --git a/src/preload/api-types.ts b/src/preload/api-types.ts
-index e672cf3c1..10639763f 100644
+index b2d78e851..d692feee3 100644
 --- a/src/preload/api-types.ts
 +++ b/src/preload/api-types.ts
-@@ -961,6 +961,10 @@ export type AppApi = {
+@@ -962,6 +962,10 @@ export type AppApi = {
    /** Opens a native directory picker and authorizes the selected directory
     *  for Floating Workspace markdown file creation. */
    pickFloatingWorkspaceDirectory: () => Promise<string | null>
@@ -304,10 +304,10 @@ index e672cf3c1..10639763f 100644
    writeTerminalRenderDesyncEvidence: (
      args: WriteTerminalRenderDesyncEvidenceArgs
 diff --git a/src/preload/index.ts b/src/preload/index.ts
-index 7ad406770..2c8048968 100644
+index 009924197..490bd62f1 100644
 --- a/src/preload/index.ts
 +++ b/src/preload/index.ts
-@@ -472,6 +472,8 @@ const api = {
+@@ -473,6 +473,8 @@ const api = {
        ipcRenderer.invoke('app:pickFloatingMarkdownDocument'),
      pickFloatingWorkspaceDirectory: (): Promise<string | null> =>
        ipcRenderer.invoke('app:pickFloatingWorkspaceDirectory'),
@@ -511,7 +511,7 @@ index acffb2d00..c2a3f63c3 100644
    )
  }
 diff --git a/src/renderer/src/web/web-preload-api.ts b/src/renderer/src/web/web-preload-api.ts
-index 214abcd7d..aed73db96 100644
+index 3ec7ce424..52604d5eb 100644
 --- a/src/renderer/src/web/web-preload-api.ts
 +++ b/src/renderer/src/web/web-preload-api.ts
 @@ -35,7 +35,8 @@ import type {

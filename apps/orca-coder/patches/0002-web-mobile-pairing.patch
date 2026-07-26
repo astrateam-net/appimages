@@ -1,8 +1,8 @@
 diff --git a/src/main/runtime/mobile-rpc-allowlist.test.ts b/src/main/runtime/mobile-rpc-allowlist.test.ts
-index 5003a15df..4c477dc0b 100644
+index 63957f874..d5022cec7 100644
 --- a/src/main/runtime/mobile-rpc-allowlist.test.ts
 +++ b/src/main/runtime/mobile-rpc-allowlist.test.ts
-@@ -132,6 +132,19 @@ describe('mobile RPC allowlist', () => {
+@@ -133,6 +133,19 @@ describe('mobile RPC allowlist', () => {
      expect(missing).toEqual([])
    })
  
@@ -100,10 +100,10 @@ index 5b6770880..2145af485 100644
            registerBinaryStreamHandler: options?.registerBinaryStreamHandler
          },
 diff --git a/src/main/runtime/rpc/methods/index.ts b/src/main/runtime/rpc/methods/index.ts
-index 721272934..fe3c3da86 100644
+index 537e7ce97..96ba0782d 100644
 --- a/src/main/runtime/rpc/methods/index.ts
 +++ b/src/main/runtime/rpc/methods/index.ts
-@@ -35,6 +35,7 @@ import { CLIPBOARD_METHODS } from './clipboard'
+@@ -36,6 +36,7 @@ import { CLIPBOARD_METHODS } from './clipboard'
  import { HOST_CAPABILITY_METHODS } from './host-capabilities'
  import { EMULATOR_METHODS } from './emulator'
  import { PAIRING_METHODS } from './pairing'
@@ -111,7 +111,7 @@ index 721272934..fe3c3da86 100644
  import { UPDATER_METHODS } from './updater'
  import { AGENT_SESSION_METHODS } from './agent-session'
  
-@@ -79,5 +80,6 @@ export const ALL_RPC_METHODS: readonly RpcAnyMethod[] = [
+@@ -81,5 +82,6 @@ export const ALL_RPC_METHODS: readonly RpcAnyMethod[] = [
    ...CLIENT_UI_METHODS,
    ...EMULATOR_METHODS,
    ...PAIRING_METHODS,
@@ -261,7 +261,7 @@ index 000000000..4a9fdbc39
 +  })
 +]
 diff --git a/src/main/runtime/runtime-rpc.ts b/src/main/runtime/runtime-rpc.ts
-index 92151612e..4687d307b 100644
+index 6ba6c2213..c90b92b18 100644
 --- a/src/main/runtime/runtime-rpc.ts
 +++ b/src/main/runtime/runtime-rpc.ts
 @@ -7,7 +7,11 @@ import type { RuntimeMetadata, RuntimeTransportMetadata } from '../../shared/run
@@ -277,7 +277,7 @@ index 92151612e..4687d307b 100644
  import { errorResponse } from './rpc/errors'
  import type { RpcMessageContext, RpcTransport } from './rpc/transport'
  import { UnixSocketTransport } from './rpc/unix-socket-transport'
-@@ -725,6 +729,47 @@ export class OrcaRuntimeRpcServer {
+@@ -736,6 +740,47 @@ export class OrcaRuntimeRpcServer {
      }
    }
  
@@ -325,7 +325,7 @@ index 92151612e..4687d307b 100644
    private queueRelayDeviceRevoke(binding: RelayDeviceBinding): void {
      const item = this.relayRevokeOutbox.enqueue(binding)
      this.mobileRelayPairingProvider?.onDeviceRevokeQueued(item)
-@@ -1209,6 +1254,10 @@ export class OrcaRuntimeRpcServer {
+@@ -1220,6 +1265,10 @@ export class OrcaRuntimeRpcServer {
          // Why: gates the mobile-only payload diet so full-screen web/desktop clients aren't truncated.
          clientKind: device.scope,
          pairing: pairingContext,
@@ -746,7 +746,7 @@ index 5002689c1..f75dbfaa3 100644
      <p className={cn('text-[11px] text-muted-foreground', className)}>
        {translate('auto.components.settings.MobileRelayBetaNotice.notice', 'Orca Relay is in beta.')}
 diff --git a/src/renderer/src/web/web-preload-api.ts b/src/renderer/src/web/web-preload-api.ts
-index 10542b483..4cb7d126b 100644
+index 00dcba972..4f0c655af 100644
 --- a/src/renderer/src/web/web-preload-api.ts
 +++ b/src/renderer/src/web/web-preload-api.ts
 @@ -13,6 +13,8 @@ import type {
@@ -758,7 +758,7 @@ index 10542b483..4cb7d126b 100644
  import type {
    ComputerUsePermissionSetupResult,
    ComputerUsePermissionStatusResult
-@@ -803,14 +805,58 @@ function createWebPreloadApi(): Partial<PreloadApi> {
+@@ -818,14 +820,58 @@ function createWebPreloadApi(): Partial<PreloadApi> {
        transferPaneAuthority: () => {}
      },
      mobile: {

@@ -47,10 +47,10 @@ index 659c69d9c..44f2ede2f 100644
    ipcMain.handle(
      'cli:getWslInstallStatus',
 diff --git a/src/main/runtime/mobile-rpc-allowlist.test.ts b/src/main/runtime/mobile-rpc-allowlist.test.ts
-index 84e5e0fd4..397fa0981 100644
+index c795f2c8c..58d87fd00 100644
 --- a/src/main/runtime/mobile-rpc-allowlist.test.ts
 +++ b/src/main/runtime/mobile-rpc-allowlist.test.ts
-@@ -160,4 +160,26 @@ describe('mobile RPC allowlist', () => {
+@@ -161,4 +161,26 @@ describe('mobile RPC allowlist', () => {
        )
      ).toEqual([])
    })
@@ -206,10 +206,10 @@ index 000000000..8cfdc6d97
 +  })
 +]
 diff --git a/src/main/runtime/rpc/methods/index.ts b/src/main/runtime/rpc/methods/index.ts
-index fe3c3da86..f713c0b65 100644
+index 96ba0782d..52bb0f5fd 100644
 --- a/src/main/runtime/rpc/methods/index.ts
 +++ b/src/main/runtime/rpc/methods/index.ts
-@@ -37,6 +37,7 @@ import { EMULATOR_METHODS } from './emulator'
+@@ -38,6 +38,7 @@ import { EMULATOR_METHODS } from './emulator'
  import { PAIRING_METHODS } from './pairing'
  import { MOBILE_PAIRING_METHODS } from './mobile-pairing'
  import { UPDATER_METHODS } from './updater'
@@ -217,7 +217,7 @@ index fe3c3da86..f713c0b65 100644
  import { AGENT_SESSION_METHODS } from './agent-session'
  
  // Why: a flat manifest keeps registration order explicit and provides one
-@@ -81,5 +82,6 @@ export const ALL_RPC_METHODS: readonly RpcAnyMethod[] = [
+@@ -83,5 +84,6 @@ export const ALL_RPC_METHODS: readonly RpcAnyMethod[] = [
    ...EMULATOR_METHODS,
    ...PAIRING_METHODS,
    ...MOBILE_PAIRING_METHODS,
@@ -226,7 +226,7 @@ index fe3c3da86..f713c0b65 100644
 +  ...CLI_METHODS
  ]
 diff --git a/src/renderer/src/web/web-preload-api.ts b/src/renderer/src/web/web-preload-api.ts
-index e48ad3485..214abcd7d 100644
+index a5a43dced..3ec7ce424 100644
 --- a/src/renderer/src/web/web-preload-api.ts
 +++ b/src/renderer/src/web/web-preload-api.ts
 @@ -37,6 +37,7 @@ import type {
@@ -237,7 +237,7 @@ index e48ad3485..214abcd7d 100644
  import type { SkillDiscoveryResult } from '../../../shared/skills'
  import type { SkillFreshnessInventory } from '../../../shared/skill-freshness'
  import type { SshConnectionState, SshTarget } from '../../../shared/ssh-types'
-@@ -2737,7 +2738,9 @@ function createPreflightApi(): NonNullable<Partial<PreloadApi>['preflight']> {
+@@ -2753,7 +2754,9 @@ function createPreflightApi(): NonNullable<Partial<PreloadApi>['preflight']> {
  }
  
  function createCliApi(): NonNullable<Partial<PreloadApi>['cli']> {
@@ -248,7 +248,7 @@ index e48ad3485..214abcd7d 100644
      platform: getBrowserPlatform(),
      commandName: getBrowserPlatform() === 'linux' ? 'orca-ide' : 'orca',
      commandPath: null,
-@@ -2749,15 +2752,40 @@ function createCliApi(): NonNullable<Partial<PreloadApi>['cli']> {
+@@ -2765,15 +2768,40 @@ function createCliApi(): NonNullable<Partial<PreloadApi>['cli']> {
      state: 'unsupported',
      currentTarget: null,
      unsupportedReason: 'launch_mode_unavailable',

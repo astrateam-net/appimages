@@ -18,21 +18,22 @@ Paths are operator-relative — resolve these on your machine:
 
 Each patch = diff between consecutive feature-boundary commits on the fork branch:
 
+Base is **`v1.4.156`**. Patch `0000` was dropped on that bump (upstream landed the
+`DetachedHeadBadge` `tabIndex` fix) — every patch in the series is now an orca-coder capability,
+none carries an upstream fix. See `apps/orca-coder/CLAUDE.md` §3.
+
 | Patch | Boundary |
 |---|---|
-| 0000 upstream tabIndex fix ⚠️ | `v1.4.155 → 0aa5de8de` |
-| 0001 trusted-proxy session | `0aa5de8de → 5a7d91cdf` |
-| 0002 web mobile pairing | `5a7d91cdf → b20a3c698` |
-| 0003 web runtime share links | `b20a3c698 → 2dcb65770` |
-| 0004 web resource manager | `2dcb65770 → 4cb98816b` |
-| 0005 web CLI registration | `4cb98816b → 1c7f9328a` |
-| 0006 web floating-workspace dir picker | `1c7f9328a → 704608cf1` |
-| 0007 runtime-seeded settings | `704608cf1 → f8c81885b` |
-| 0008 open-in browser editor URLs | `f8c81885b → a3f814cb5` |
-| next | `<prev-boundary> → <new-commit>` → `0009-…` |
-
-⚠️ **0000 is an upstream bugfix, not an orca-coder capability** — see `apps/orca-coder/CLAUDE.md` §3.
-Drop it the moment a tag declares `tabIndex` on `DetachedHeadBadgeProps`.
+| 0001 trusted-proxy session | `v1.4.156 → 9d6a7a312` |
+| 0002 web mobile pairing | `9d6a7a312 → 9fb3a4713` |
+| 0003 web runtime share links | `9fb3a4713 → 0044ff0b6` |
+| 0004 web resource manager | `0044ff0b6 → 77df8c08d` |
+| 0005 web CLI registration | `77df8c08d → 46e99470b` |
+| 0006 web floating-workspace dir picker | `46e99470b → 8cb9c88a1` |
+| 0007 runtime-seeded settings | `8cb9c88a1 → 113626f5a` |
+| 0008 open-in browser editor URLs | `113626f5a → 847dc1a6e` |
+| 0009 floating workspace runtime owner | `847dc1a6e → 3d6c32c68` |
+| next | `<prev-boundary> → <new-commit>` → `0010-…` |
 
 **Rebasing the series onto a new tag:** `git branch -f backup/<old> HEAD` first, then
 `git rebase --onto <newtag> <oldtag> patch/trusted-proxy-v2`, re-export every boundary, and

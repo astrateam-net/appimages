@@ -71,6 +71,28 @@ no-op/throw. That is the root cause of nearly every "works on desktop, dead in t
 the fix is almost always to route the stub to a runtime RPC (or add one), mirroring the desktop
 `ipc/*.ts` contract 1:1.
 
+### "Not a named runtime" ≠ "this machine"
+
+The other half, and the one that keeps recurring (`0006`, `0008`, `0009` twice over): code that
+reads *no `runtimeEnvironmentId`* as *therefore local*, then does something only a desktop app
+can do — spawn a PTY, mount a `<webview>`, open a native dialog, focus a renderer window. Correct
+for a laptop driving a remote runtime; **never correct for a browser the runtime itself serves,
+where local and runtime are the same host and every local affordance is a stub.**
+
+- **Diagnose by locality, not by feature.** Grep what the code believes: `=== null` on a runtime
+  id, `'local'`, `LOCAL_EXECUTION_HOST_ID`, `isWebClient`, `window.api.<ns>`. In `0009` every fix
+  was reachable from an existing runtime path — the whole patch is ownership decisions plus one
+  RPC wrapping a helper the desktop handler already called.
+- **Fix at the resolver, not the call site.** Terminal, browser and the setup/default-tab
+  automations all route through `getRuntimeEnvironmentIdForWorktree`; fixing the ternary in
+  `pty-connection.ts` alone would have fixed one of three.
+- **A path existing in source is not evidence it is taken.** Two `0009` conclusions were inferred
+  from reading routing code and both were wrong. Behavioral claims need a test or a live check.
+- **Check the runtime first — it is usually already capable.** It answers the floating sentinel
+  with the home dir, `browser.tabCreate`'s `worktree` is optional, and there is an offscreen
+  browser backend for headless hosts. Prefer omitting a parameter over teaching the server a new
+  concept.
+
 ---
 
 ## 2. ⚠️ Launch contract — the #1 trap in this app
@@ -139,17 +161,17 @@ Generic build / Renovate / CI mechanics live in the repo-root CLAUDE.md. orca-co
 - **VERSION must be a REAL `stablyai/orca` tag** — verify with `git ls-remote upstream
   'refs/tags/<tag>^{}'`; the fork's local tag store has held a fabricated `v1.4.154` that
   upstream never published.
-- **⚠️ `0000-upstream-detached-head-badge-tabindex.patch` is NOT ours — DROP IT when upstream
-  ships the fix.** It is the only patch in the series that fixes an *upstream* bug rather than
-  adding an orca-coder capability. `v1.4.155` shipped `source-control-branch-context-row.tsx`
-  passing `tabIndex={0}` to `DetachedHeadBadge` without widening `DetachedHeadBadgeProps`, so
-  `pnpm typecheck` fails — and `build:desktop` runs typecheck first, so a from-source build of
-  `v1.4.155` cannot complete without it. Every tag through `v1.4.156-rc.2` carries the same
-  mismatch; upstream fixed it on `main` after the release (`tabIndex?: number` + forward to
-  `Badge`), identically. **On every VERSION bump, check whether the new tag already declares
-  `tabIndex` on `DetachedHeadBadgeProps` — if it does, delete this patch and renumber nothing
-  (the others are independent).** Leaving it in once upstream has the fix makes `git apply`
-  fail the build, which is the intended loud signal but wastes a cycle.
+- **Patch `0000` is gone as of `v1.4.156`** — it carried an *upstream* bugfix (`v1.4.155` passed
+  `tabIndex={0}` to `DetachedHeadBadge` without widening `DetachedHeadBadgeProps`, failing the
+  typecheck that `build:desktop` runs first). `v1.4.156` declares `tabIndex?: number` and forwards
+  it to `Badge`, so the patch was deleted on that bump. The series is now `0001`–`0009`, all
+  orca-coder capabilities, none carrying upstream fixes. **If a future bump ever needs one again,
+  keep it at `0000` and record the drop condition here** — a patch that fixes upstream must be
+  droppable the moment upstream lands it, or `git apply` fails the build.
+- **Upstream's own suite is not clean.** `project-view-wrapper-source-context-boundary` fails under
+  full-suite parallel load on pristine `v1.4.156` (pristine `v1.4.155` fails 14). Before blaming a
+  patch for a test failure, run the same suite on the **pristine tag** — comparing against the
+  previous patch boundary only rules out that patch, not the bump.
 - **Release:** CI publishes to the tag `orca-coder-<VERSION>` with `allowUpdates: true`, so a
   re-release **replaces the asset under the same tag** — VERSION need not bump for a patch fix.
 - **Same-tag refresh:** the install script re-extracts when `VERSION` changes OR the asset's

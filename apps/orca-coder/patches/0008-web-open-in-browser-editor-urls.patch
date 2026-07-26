@@ -1362,7 +1362,7 @@ index 000000000..417ae6f9a
 +  return <ExternalLink className="size-3.5" />
 +}
 diff --git a/src/renderer/src/store/slices/settings.ts b/src/renderer/src/store/slices/settings.ts
-index f9d4d4f36..750b4e628 100644
+index 7b0d623a0..8513a5042 100644
 --- a/src/renderer/src/store/slices/settings.ts
 +++ b/src/renderer/src/store/slices/settings.ts
 @@ -12,7 +12,10 @@ import type { RuntimeStatus } from '../../../../shared/runtime-types'
@@ -1892,10 +1892,10 @@ index 8159c75cc..977c2d3dd 100644
  
  export type RuntimeSeededSettingKey = keyof typeof RUNTIME_SEEDED_SETTING_SCHEMA
 diff --git a/src/shared/types.ts b/src/shared/types.ts
-index 32f3f4731..8afd9c08b 100644
+index 7a8253a0e..6a0cba809 100644
 --- a/src/shared/types.ts
 +++ b/src/shared/types.ts
-@@ -2570,6 +2570,11 @@ export type OpenInApplication = {
+@@ -2573,6 +2573,11 @@ export type OpenInApplication = {
    id: string
    label: string
    command: string

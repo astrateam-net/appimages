@@ -1,8 +1,8 @@
 diff --git a/src/main/runtime/orca-runtime.ts b/src/main/runtime/orca-runtime.ts
-index 1c42b0135..ebd63aeac 100644
+index 345c5cac6..a25d3927c 100644
 --- a/src/main/runtime/orca-runtime.ts
 +++ b/src/main/runtime/orca-runtime.ts
-@@ -168,6 +168,10 @@ import type {
+@@ -169,6 +169,10 @@ import type {
    WorkspaceSessionState,
    DirEntry
  } from '../../shared/types'
@@ -13,7 +13,7 @@ index 1c42b0135..ebd63aeac 100644
  import { assertWorktreeUnlockedForRemoval } from '../../shared/worktree-removal'
  import {
    LOCAL_EXECUTION_HOST_ID,
-@@ -3050,12 +3054,17 @@ export class OrcaRuntimeService {
+@@ -3093,12 +3097,17 @@ export class OrcaRuntimeService {
      | 'minimaxGroupId'
      | 'minimaxUsageModels'
      | 'prBotAuthorOverrides'
@@ -33,7 +33,7 @@ index 1c42b0135..ebd63aeac 100644
        disabledTuiAgents: settings.disabledTuiAgents ?? [],
        agentCmdOverrides: settings.agentCmdOverrides ?? {},
 diff --git a/src/renderer/src/web/web-preload-api.ts b/src/renderer/src/web/web-preload-api.ts
-index aed73db96..8f5f84619 100644
+index 52604d5eb..1d284e6c5 100644
 --- a/src/renderer/src/web/web-preload-api.ts
 +++ b/src/renderer/src/web/web-preload-api.ts
 @@ -81,6 +81,7 @@ import {
@@ -44,7 +44,7 @@ index aed73db96..8f5f84619 100644
  import { normalizeTerminalCustomThemes } from '../../../shared/terminal-custom-themes'
  import { normalizeUiLanguage } from '../../../shared/ui-language'
  import { normalizeUsagePercentageDisplay } from '../../../shared/usage-percentage-display'
-@@ -3533,6 +3534,10 @@ function getStoredSettings(): GlobalSettings {
+@@ -3569,6 +3570,10 @@ function writeStoredSettings(
  }
  
  async function getRuntimeBackedStoredSettings(): Promise<GlobalSettings> {
@@ -55,7 +55,7 @@ index aed73db96..8f5f84619 100644
    const local = getStoredSettings()
    if (!requireActiveEnvironmentOrNull()) {
      return local
-@@ -3562,6 +3567,13 @@ async function getRuntimeBackedStoredSettings(): Promise<GlobalSettings> {
+@@ -3598,6 +3603,13 @@ async function getRuntimeBackedStoredSettings(): Promise<GlobalSettings> {
          result.settings.prBotAuthorOverrides
        )
      }
@@ -67,7 +67,7 @@ index aed73db96..8f5f84619 100644
 +      Object.assign(runtimeSettings, pickRuntimeSeededSettings(result.settings))
 +    }
      const next = mergeSettings(local, runtimeSettings)
-     writeJson(SETTINGS_STORAGE_KEY, next)
+     writeStoredSettings(next)
      return next
 diff --git a/src/shared/runtime-seeded-settings.test.ts b/src/shared/runtime-seeded-settings.test.ts
 new file mode 100644
