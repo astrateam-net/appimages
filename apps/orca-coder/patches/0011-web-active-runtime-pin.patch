@@ -1,8 +1,8 @@
 diff --git a/src/renderer/src/web/web-preload-api.ts b/src/renderer/src/web/web-preload-api.ts
-index 8c44b5cff..85d4226e4 100644
+index 8c44b5cff..dbe4ae9ce 100644
 --- a/src/renderer/src/web/web-preload-api.ts
 +++ b/src/renderer/src/web/web-preload-api.ts
-@@ -3556,7 +3606,23 @@ function getStoredSettings(): GlobalSettings {
+@@ -3556,7 +3556,23 @@ function getStoredSettings(): GlobalSettings {
        ...defaults,
        floatingTerminalEnabled: false,
        rightSidebarOpenByDefault: false,

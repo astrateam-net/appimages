@@ -9,235 +9,199 @@ AppImage-factory mechanics — build sandbox, fork = polygon, `git apply`, Renov
 the repo-root CLAUDE.md. Per-patch history: [CHANGELOG.md](CHANGELOG.md).) Change behavior →
 change this file in the same commit.
 
----
+## 0. How a change enters the series
+
+`orca-coder-patch-` **audit** (where it goes) → **author** (write it there) → **verify** → **ship**.
+How each answers its question is in its own SKILL.md. Invariants:
+
+1. **Diagnose, place, then write.** Placement needs the *symbol* list from diagnosis; from a
+   capability's name alone it cannot decide. Guessing from a name is how a second
+   floating-workspace fix became `0009` instead of extending `0006`.
+2. **Ownership is by symbol, never by file.** Hub files are touched by almost every patch, so a
+   shared file decides nothing. A shared **symbol** means one capability split in two.
+3. **A new number is a claim, defended in the CHANGELOG** — its entry names the patches considered
+   and why this is not an extension. No sentence, no new number: that entry is the only committed
+   record of the decision. It also carries `Acceptance` (the test that fails without the patch);
+   without one the patch can never be shrunk, merged or dropped with confidence.
+4. **A fix to existing patch logic never takes a new number** — restack that boundary and
+   re-export. Restacking cost is work, not a correctness argument.
+5. **A patch must be byte-identical to `git diff <prev-boundary> <this-boundary>`.** Exporting
+   against `HEAD` is right only for the newest patch; otherwise it swallows later patches and
+   records blobs that do not exist at that boundary. Such a patch still applies — `git apply`
+   re-anchors, and `--3way` re-derives the post-image — so the damage is quiet: `offset` lines,
+   reverse-apply drift, and `0001..000N` no longer reproducing boundary N's tree. **`git apply`
+   succeeding is not acceptance**, of correctness or of purpose: a patch can apply cleanly and be
+   redundant or already shipped upstream. Every bump re-justifies each patch
+   (keep / shrink / merge / drop) rather than rebasing until it applies.
+6. **The tooling is local-only; the obligation is not.** Graphs and audit scripts live in
+   git-excluded config on one machine. Everything they accelerate is answerable from the exported
+   diffs alone, so missing tooling means answer slower, never skip — and nothing committed may
+   depend on it.
+
+7. **A path existing in source is not evidence it is taken.** Static reachability, grep hits and
+   graph traces are leads, never proof — behavioural claims need a test or a live check. Two `0009`
+   conclusions were inferred from reading routing code and both were wrong.
+
+Test for what belongs here: a line that changes when a command or file list changes goes in a skill;
+one that changes only when the *rules* change goes here.
 
 ## 1. The problem and the design
 
-Stock `orca serve` mints a per-startup pairing token and delivers it **only in the URL
-fragment** (`…/web-index.html#pairing=<token>`). A Coder tile URL is fixed at template-build
-time — it can never carry a runtime-minted fragment — so a stock tile lands on a "paste a
-pairing code" form. `code-server` solves the same problem with `--auth none` + loopback bind,
-trusting the proxy that already authenticated the user; orca-coder's opt-in `serve
---trusted-proxy` does the same while keeping Orca's E2EE intact.
+Stock `orca serve` delivers its pairing token **only in the URL fragment**, and a Coder tile URL is
+fixed at template-build time — so a stock tile lands on a "paste a pairing code" form.
+`serve --trusted-proxy` solves it as `code-server` does (`--auth none` + loopback bind, trusting the
+proxy that already authenticated) while keeping Orca's E2EE. Invariants any patch must respect:
 
-The invariants below are what any patch must respect.
+**Trusted-proxy web session**
 
-### The trusted-proxy web session
+- **Loopback bind = proof of Coder auth.** Trusted mode binds the WS listener to `127.0.0.1` only.
+  `runtime-rpc.ts`.
+- **`GET /trusted-session`** (loopback-gated, `no-store`): non-loopback → 404; no offer yet → 503;
+  else 200 `{"pairingUrl": …}`. `static-web-client-handler.ts`.
+- **Same-origin dial** — the client keeps the offer's E2EE credential but derives the WS endpoint
+  from `window.location`, so **the tile needs no `--pairing-address`**. On `auth-failed` it re-probes
+  and adopts a NEW offer + reload; the SAME token falls through to manual re-pair, which is also
+  what guards the reload loop. `web-pairing.ts`, `web-runtime-client.ts`, `web-preload-api.ts`.
+- **E2EE preserved** — only the credential's delivery moved (fragment → loopback fetch); Coder never
+  reads runtime traffic. Device registry + keypair persist on disk, so an offer survives restarts.
+- **Threat model (accepted):** loopback gating means any local process on the host can read the offer
+  and reach the runtime. Safe only on single-owner hosts, never a shared machine.
 
-- **Loopback bind = proof of Coder auth.** Trusted mode binds the runtime WS listener to
-  `127.0.0.1` only; a loopback peer is proof the request arrived through Coder (which enforced
-  auth) — code-server's `--auth none` + loopback model. `runtime-rpc.ts`.
-- **`GET /trusted-session`** (loopback-gated, `Cache-Control: no-store`): non-loopback → **404**;
-  no offer mintable yet → **503**; else **200** `{"pairingUrl": …}`. `static-web-client-handler.ts`.
-- **Same-origin dial.** The web client keeps the offer's E2EE credential but derives the WS
-  endpoint from `window.location`, so **the tile needs no `--pairing-address`**. On `auth-failed`
-  (serve re-keyed) it re-probes `/trusted-session` and adopts a NEW offer + reload; the SAME
-  token falls through to stock manual re-pair (that compare also guards the reload loop).
-  `web-pairing.ts`, `web-runtime-client.ts`, `web-preload-api.ts`.
-- **E2EE preserved** — the patch only moves the credential's delivery from URL fragment to a
-  loopback-gated fetch; Coder never reads runtime traffic. Device registry + keypair persist on
-  disk (`userDataPath`), so a stored offer survives restarts of the same server state.
-- **Threat model (accepted):** loopback gating means ANY local process on the host can read the
-  offer → runtime access. Safe ONLY on single-owner hosts (a per-user Coder workspace), never a
-  shared multi-user machine.
+**Credential scopes & pairing**
 
-### Credential scopes & pairing
+- Two scopes: **`mobile`** (RPC allowlist + payload diet) and **`runtime`** (full). Absence from
+  `MOBILE_RPC_METHOD_ALLOWLIST` = runtime-only. Anything host-mutating or credential-minting must
+  never be on it — phone-reachable would be escalation. Test-enforced.
+- **Mint/revoke is authorized by the `trustedMobilePairing` context**, injected only for
+  `runtime`-scope connections; absent → fail closed. Strict zod params: server-policy fields like
+  addresses must error, not strip. `mobile-pairing.ts`.
+- **Advertised address is always server policy** (`--pairing-address`), never client-chosen; headless
+  pins connection mode `local-only`. **Coder is authn, Orca is authz + E2EE.**
+- **The pairing URL is a double secret** (Orca device token + Coder session token) — owner tile and
+  `serve.log` only; never build logs, Terraform outputs or `coder_metadata`.
 
-- Two scopes: **`mobile`** (phones — RPC allowlist + payload diet) and **`runtime`** (full
-  clients). `MOBILE_RPC_METHOD_ALLOWLIST` (`runtime-rpc.ts`) is the scope gate: a method's
-  **absence** from it = runtime-only. Anything host-mutating or that mints/revokes credentials
-  must never be on it — phone-reachable would be escalation. Test-enforced
-  (`mobile-rpc-allowlist.test.ts`).
-- **Credential mint/revoke** — mobile offers AND runtime-share grants (`mobile.createPairingOffer`,
-  `getRuntimePairingUrl`, the `list*`/`revoke*` pairs) — is authorized by the
-  `trustedMobilePairing` context, injected **only for `runtime`-scope connections**; absent →
-  fail closed. Server callbacks live in `buildTrustedMobilePairingContext()`; params are strict
-  zod (server-policy fields like addresses must error, not strip). `mobile-pairing.ts`.
-- **Advertised address is always server policy** (`--pairing-address`), never client-chosen; the
-  headless serve pins connection mode `local-only`. The QR/link carries
-  `wss://<app-slug>--<agent>--<workspace>--<owner>.<wildcard>/?coder_session_token=<token>` —
-  **Coder is authn, Orca is authz + E2EE**. Web-UI copy reframes to "connects through this
-  workspace" / "share the connected server" (the browser has no server of its own).
-- **The pairing URL is a double secret** (Orca device token + Coder session token) — owner-tile
-  / serve.log only; never build logs, Terraform outputs, or `coder_metadata`. Coder-token expiry
-  is recoverable (Regenerate `rotate:true` → rescan); the durable owner token (§4) survives
-  workspace restarts.
+**The browser is a REMOTE client of the same box — the fact behind every tile bug**
 
-### The web client is mostly stubs
-
-Orca's web client replaces the Electron preload with `web-preload-api.ts`
-(`createWebPreloadApi()`), and upstream **stubs most of it** — empty lists, `{available:false}`,
-no-op/throw. That is the root cause of nearly every "works on desktop, dead in the tile" report;
-the fix is almost always to route the stub to a runtime RPC (or add one), mirroring the desktop
-`ipc/*.ts` contract 1:1.
-
-### "Not a named runtime" ≠ "this machine"
-
-The other half, and the one that keeps recurring (`0006`, `0008`, `0009` twice over): code that
-reads *no `runtimeEnvironmentId`* as *therefore local*, then does something only a desktop app
-can do — spawn a PTY, mount a `<webview>`, open a native dialog, focus a renderer window. Correct
-for a laptop driving a remote runtime; **never correct for a browser the runtime itself serves,
-where local and runtime are the same host and every local affordance is a stub.**
-
-- **Diagnose by locality, not by feature.** Grep what the code believes: `=== null` on a runtime
-  id, `'local'`, `LOCAL_EXECUTION_HOST_ID`, `isWebClient`, `window.api.<ns>`. In `0009` every fix
-  was reachable from an existing runtime path — the whole patch is ownership decisions plus one
-  RPC wrapping a helper the desktop handler already called.
-- **Fix at the resolver, not the call site.** Terminal, browser and the setup/default-tab
-  automations all route through `getRuntimeEnvironmentIdForWorktree`; fixing the ternary in
-  `pty-connection.ts` alone would have fixed one of three.
-- **A path existing in source is not evidence it is taken.** Two `0009` conclusions were inferred
-  from reading routing code and both were wrong. Behavioral claims need a test or a live check.
-- **Check the runtime first — it is usually already capable.** It answers the floating sentinel
-  with the home dir, `browser.tabCreate`'s `worktree` is optional, and there is an offscreen
-  browser backend for headless hosts. Prefer omitting a parameter over teaching the server a new
-  concept.
-
----
+Upstream's model has two roles on two machines: a *server* running `orca serve` that owns repos,
+worktrees, terminals and agent processes, and a *client* that runs the UI and connects. **orca-coder
+collapses both onto one host**, so `LOCAL_EXECUTION_HOST_ID` is a fiction and headless drops every
+window-bound subsystem. **Every capability therefore needs a wire representation — there is no "just
+do it locally" fallback, because local IS the server.** Upstream stubs `web-preload-api.ts` exactly
+where no wire exists yet. Three failure shapes follow (no wire / wrong locality /
+renderer-graph-driven); telling them apart is `orca-coder-patch-author`'s playbook, not this file's.
 
 ## 2. ⚠️ Launch contract — the #1 trap in this app
 
-**`squashfs-root/AppRun` is the Electron DESKTOP entrypoint. It silently ignores a `serve`
-positional** — the Electron main only reads internal `--serve-*` flags
-(`src/main/index.ts`, `isServeMode = process.argv.includes('--serve')`). Launching
-`AppRun serve --trusted-proxy --port 6799` boots the GUI under Xvfb with the **stock** runtime
-server on `0.0.0.0:6768` and no error. This cost days of debugging (2026-07); do not
-rediscover it.
+**`squashfs-root/AppRun` is the Electron DESKTOP entrypoint and silently ignores a `serve`
+positional** — the Electron main only reads internal `--serve-*` flags (`src/main/index.ts`).
+`AppRun serve --trusted-proxy --port 6799` boots the GUI under Xvfb with the **stock** server on
+`0.0.0.0:6768`, no error. Cost days in 2026-07; do not rediscover it.
 
-The user-facing CLI ships as a bash shim at **`squashfs-root/resources/bin/orca-ide`**
-(electron-builder `extraResources` — the same shim Orca's deb symlinks to `/usr/bin/orca-ide`).
-It runs `ELECTRON_RUN_AS_NODE=1 <electron> resources/app.asar.unpacked/out/cli/index.js "$@"`;
-the CLI (`src/cli/runtime/launch.ts`, `serveOrcaApp`) re-encodes the user flags to
-`--serve --serve-port <p> --serve-trusted-proxy` and re-spawns the Electron binary, staying in
-the foreground to supervise it.
+The user-facing CLI is a bash shim at **`squashfs-root/resources/bin/orca-ide`**
+(electron-builder `extraResources`). It runs the CLI under `ELECTRON_RUN_AS_NODE=1`, which
+re-encodes user flags to `--serve --serve-port <p> --serve-trusted-proxy` and re-spawns Electron,
+staying in the foreground to supervise (`src/cli/runtime/launch.ts`, `serveOrcaApp`).
 
-Canonical launch (what the Coder install script does — see §4):
+Canonical launch (what the Coder install script does — §4):
 
 ```bash
-# LXC has no FUSE → extract once per VERSION:
-./orca-coder-<VERSION>-x86_64.AppImage --appimage-extract        # → squashfs-root/
-# ALWAYS the shim, NEVER AppRun:
+./orca-coder-<VERSION>-x86_64.AppImage --appimage-extract   # LXC has no FUSE; once per VERSION
 LIBGL_ALWAYS_SOFTWARE=1 ORCA_APPIMAGE_NO_SANDBOX=1 nohup dbus-run-session -- xvfb-run -a \
   squashfs-root/resources/bin/orca-ide serve --trusted-proxy --port "$PORT" \
-  > "$LOG_DIR/serve.log" 2>&1 &
+  > "$LOG_DIR/serve.log" 2>&1 &      # ALWAYS the shim, NEVER AppRun
 ```
 
-Non-negotiable pieces:
+Non-negotiable:
 
-- **`ORCA_APPIMAGE_NO_SANDBOX=1`** (env), never a `--no-sandbox` flag — the flag is not in
-  serve's `allowedFlags`, the CLI rejects it ("Unknown flag") and serve never starts. The env
-  var is Orca's own knob; `serveOrcaApp` injects `--no-sandbox` into the Electron child.
-- **`dbus-run-session -- xvfb-run -a`** — serve is Electron, needs an X server + session bus,
-  and does NOT auto-start Xvfb here (dies "Missing X server or $DISPLAY"). Matches upstream's
-  headless harness (`config/docker/headless-pairing/`).
-- **Runtime deps** (Electron, not Node): Chromium shared libs (`libgtk-3-0 libnss3 libgbm1
+- **`ORCA_APPIMAGE_NO_SANDBOX=1`** as an env var, never a `--no-sandbox` flag — the flag is not in
+  serve's `allowedFlags`, so the CLI rejects it and serve never starts. `serveOrcaApp` injects the
+  flag into the Electron child itself.
+- **`dbus-run-session -- xvfb-run -a`** — serve is Electron and does NOT auto-start Xvfb here (dies
+  "Missing X server or $DISPLAY"), matching upstream's headless harness.
+- **Runtime deps are Electron's, not Node's**: Chromium shared libs (`libgtk-3-0 libnss3 libgbm1
   libasound2 libatk-bridge2.0-0 libatspi2.0-0 libdrm2 libxcomposite1 libxdamage1 libxfixes3
   libxkbcommon0 libxrandr2 libxss1`) plus `xvfb xauth dbus-x11`.
-- **`--pairing-address`** — not needed for the browser tile (same-origin dial), but **required
-  for mobile pairing** (patch 0002): the template passes
-  `--pairing-address "https://<tile-hostname>/?coder_session_token=<token>"` so QR offers
-  advertise the Coder subdomain URL. Without it, Generate code fails honestly
-  ("no advertised pairing address").
-- **Healthcheck → `GET /web-index.html`** (200). Not `/trusted-session` (503 until pairing
-  init) and not the WS port itself.
-- **amd64 only** — the dev Mac (arm64) cannot run it natively. Test on Linux/amd64 (§5).
-
-### Success criteria (all verified 2026-07-24 in CT 100 as user `coder`)
-
-1. `ss -ltn` shows **`LISTEN 127.0.0.1:<PORT>`** — loopback, correct port, no `0.0.0.0:6768`.
-2. `curl http://127.0.0.1:<PORT>/web-index.html` → **200**.
-3. `curl http://127.0.0.1:<PORT>/trusted-session` (loopback) → **200** with the offer JSON.
-4. The Coder subdomain tile loads the Orca UI with **no pairing prompt**.
-
-With `--json`, one `{"type":"orca_server_ready", …}` line prints the endpoints. Side effect on
-first run: serve installs `~/.local/bin/orca-ide` + a bare `orca` dispatcher — benign, useful.
-
----
-
+- **`--pairing-address`** is unnecessary for the tile (same-origin dial) but **required for mobile
+  pairing** (0002); without it Generate code fails with "no advertised pairing address".
+- **Healthcheck is `GET /web-index.html`** (200) — not `/trusted-session` (503 until pairing init),
+  not the WS port.
+- **amd64 only.** The dev Mac is arm64; test on Linux/amd64.
 ## 3. Build & release specifics
 
-Generic build / Renovate / CI mechanics live in the repo-root CLAUDE.md. orca-coder-only:
+Generic build / Renovate / CI mechanics are in the repo-root CLAUDE.md. orca-coder-only:
 
-- **VERSION must be a REAL `stablyai/orca` tag** — verify with `git ls-remote upstream
-  'refs/tags/<tag>^{}'`; the fork's local tag store has held a fabricated `v1.4.154` that
-  upstream never published.
-- **Patch `0000` is gone as of `v1.4.156`** — it carried an *upstream* bugfix (`v1.4.155` passed
-  `tabIndex={0}` to `DetachedHeadBadge` without widening `DetachedHeadBadgeProps`, failing the
-  typecheck that `build:desktop` runs first). `v1.4.156` declares `tabIndex?: number` and forwards
-  it to `Badge`, so the patch was deleted on that bump. The series is now `0001`–`0009`, all
-  orca-coder capabilities, none carrying upstream fixes. **If a future bump ever needs one again,
-  keep it at `0000` and record the drop condition here** — a patch that fixes upstream must be
-  droppable the moment upstream lands it, or `git apply` fails the build.
-- **Upstream's own suite is not clean.** `project-view-wrapper-source-context-boundary` fails under
-  full-suite parallel load on pristine `v1.4.156` (pristine `v1.4.155` fails 14). Before blaming a
-  patch for a test failure, run the same suite on the **pristine tag** — comparing against the
-  previous patch boundary only rules out that patch, not the bump.
-- **Release:** CI publishes to the tag `orca-coder-<VERSION>` with `allowUpdates: true`, so a
-  re-release **replaces the asset under the same tag** — VERSION need not bump for a patch fix.
-- **Same-tag refresh:** the install script re-extracts when `VERSION` changes OR the asset's
-  HTTP ETag differs (`ASSET_ETAG` beside `VERSION` in the module dir); offline/ETag-less
-  responses keep the cached extract so a start never bricks. On refresh it kills the old serve
-  so the port guard relaunches the fresh build.
-
----
+- **VERSION must be a REAL `stablyai/orca` tag** — `git ls-remote upstream 'refs/tags/<tag>^{}'`.
+  The fork's local tag store has held a fabricated `v1.4.154` upstream never published.
+- **A patch carrying an UPSTREAM fix stays at `0000`** so it can be deleted the moment upstream
+  lands it — otherwise `git apply` fails the build. `0000` was dropped at `v1.4.156` (upstream took
+  the `DetachedHeadBadge` `tabIndex` fix); every current patch is an orca-coder capability. If a
+  bump ever needs one again, record the drop condition here.
+- **Upstream's own suite is not clean** — `project-view-wrapper-source-context-boundary` fails under
+  full-suite parallel load on pristine `v1.4.156`. Before blaming a patch, run the same suite on the
+  **pristine tag**; comparing against the previous patch boundary only rules out that patch, not the
+  bump.
+- **Release:** CI publishes to tag `orca-coder-<VERSION>` with `allowUpdates: true`, so a re-release
+  replaces the asset under the same tag — VERSION need not bump for a patch fix.
+- **Same-tag refresh:** the install script re-extracts when `VERSION` changes or the asset's HTTP
+  ETag differs (`ASSET_ETAG` beside `VERSION`); an ETag-less response keeps the cached extract so a
+  start never bricks. On refresh it kills the old serve so the port guard relaunches.
 
 ## 4. Deployment map
 
 | Repo | Path | Role |
 |---|---|---|
 | **appimages** (this) | `apps/orca-coder/` | Builds + releases the AppImage |
-| **fork** | `mrkhachaturov/orcaide` @ `patch/trusted-proxy-v2` | Patch authoring (worktree `…/orcaide-v2`) |
-| **upstream clone** | `…/astrateam-net/containers/.upstream/orca` | Read-only source for tracing |
-| **Coder module** | GitLab `registry/terraform-modules/coder/registry/astrateam/modules/orca/` (`main.tf`, `scripts/install.sh`) | Installs + launches in the workspace, publishes the `coder_app` tile (`url = "http://localhost:6799"`, `subdomain = true`, `share = "owner"`). Mobile pairing: the script passes `--pairing-address "https://<app-hostname>/?coder_session_token=<durable token>"`. Module name is **`orca`** — `orca-coder` names only the release asset it downloads |
-| **control-plane** | `terraform/coder/templates/proxmox-lxc/agent.tf` → `module "orca"` | Consumes the registry module (`source = "code.astrateam.net/registry/orca/coder"`). It holds **no** install script of its own — an earlier `astraide.tf` + `scripts/install-astraide.sh` pair was folded into the module |
+| **fork worktree** ⭐ | `.upstream/orcaide-v2/` — `mrkhachaturov/orcaide` @ `patch/trusted-proxy-v2` | **THE source of truth.** Base = VERSION; HEAD = base + the series. Author, export and trace Orca source here |
+| ~~upstream clone~~ | `…/containers/.upstream/orca` | **Do not use** — the sibling repo owns it and pins it elsewhere |
+| **Coder module** | GitLab `registry/…/modules/orca/` (`main.tf`, `scripts/install.sh`) | Installs + launches in the workspace; publishes the `coder_app` tile (`localhost:6799`, `subdomain = true`, `share = "owner"`) and passes `--pairing-address`. Module is named **`orca`**; `orca-coder` names only the release asset |
+| **control-plane** | `terraform/coder/templates/proxmox-lxc/agent.tf` → `module "orca"` | Consumes the registry module; holds no install script of its own |
 
-**Durable pairing token (verified live 2026-07-24):** `data.coder_workspace_owner.me.session_token`
-is **revoked on every rebuild**, so it is only the *bootstrap* credential. The install script
-mints an `application_connect`-scoped owner token once (`POST /api/v2/users/me/keys/tokens`,
-lifetime 30d → 7d fallback, ns-valued `lifetime`), caches it 0600 at
-`<module_dir>/pairing-token`, and validates it each start **against the app lane**
-(`GET https://<app-host>/web-index.html?coder_session_token=…`; 2xx/5xx = valid, 3xx/4xx =
-re-mint) — NOT `/api/v2/users/me`, where that scope is RBAC-denied (404) and would silently
-re-mint every boot. Phones therefore survive workspace restarts; re-pair is only needed when
-the durable token expires (Regenerate → rescan). Tokens are never echoed; templatefile
-escaping: shell `$${…}` AND curl format `%%{http_code}` (both `${` and `%{` are template
-directives).
+### ⚠️ Trace Orca source ONLY in the fork — and prove the version first
 
-Live test env: workspace LXC **CT 100** (`astradev`) on Proxmox host `coder01`; module dir
-`/home/coder/.coder-modules/astrateam/orca/` holds the extract, `VERSION`, `logs/serve.log`
-(the Coder module is named `orca`, NOT `orca-coder` — `orca-coder` names only the release asset;
-verified live 2026-07-25).
-(How to run + verify inside it: `orca-coder-patch-verify` skill.)
+```bash
+git -C .upstream/orcaide-v2 describe --tags   # must start with the VERSION in docker-bake.hcl
+```
 
----
+The fork is the only tree both at our base tag and carrying our series. The `containers` clone is
+pinned by another repo — it sat 5 minors behind and **produced confident, wrong answers** (its
+`buildPtyTerminalSummary` hardcodes `tabId: "pty:<ptyId>"`, which faked a contradiction of `0010`'s
+premise and cost a full investigation). Same rule for pristine comparisons: `git worktree add` off
+the real tag in the fork, never a nearby clone.
 
+**Durable pairing token.** `data.coder_workspace_owner.me.session_token` is revoked on every
+rebuild, so it is only the bootstrap credential. The install script mints an
+`application_connect`-scoped owner token once, caches it 0600 at `<module_dir>/pairing-token`, and
+validates it each start **against the app lane** (`GET https://<app-host>/web-index.html?…`;
+2xx/5xx = valid) — NOT `/api/v2/users/me`, where that scope is RBAC-denied (404) and would silently
+re-mint every boot. Phones therefore survive restarts. Tokens are never echoed; templatefile needs
+`$${…}` and `%%{http_code}` escaping.
 ## 5. Debugging gotchas (each cost real time — don't relearn them)
 
-- **Flags "ignored", binds `0.0.0.0:6768`** → you launched via `AppRun`. Use the shim (§2).
+- **`TypeError: Cannot convert undefined or null to object` at module load** → import cycle entered
+  from the wrong end. `orca-runtime.ts` sits in one with the RPC tree; the other `rpc/` files
+  reference it with `import type` (erased, no runtime edge). `0013` added the only **value** import
+  and used it at module scope — **29 test files and 411 tests** died; `orca serve` survived on
+  import-order luck. **Value imports from a hub module go in a leaf under `src/shared/`, and nothing
+  crossing a cycle is evaluated at module scope.** Its own tests stayed green: the 29 were upstream
+  tests the series never names, so a patch-derived test list is necessary and not sufficient.
   `6768` = `DEFAULT_WS_PORT` non-trusted default; GUI-style log lines (dbus `login1 Inhibit
   AccessDenied`, `GpuControl` failures, `[pty:history:gc]`) mean the desktop app booted.
 - **`FATAL … Failed to shutdown` + `SIGTRAP` after ready** → your own `timeout <s>` wrapper
   fired SIGTERM at the tree. Not a crash.
-- **`pkill -f <pattern>` over `ssh`/`pct exec` kills itself** — the wrapping shell's cmdline
-  contains the pattern. Use `pkill -f "[b]racketed"` patterns AND keep the kill in a separate
-  invocation from any command whose text contains the pattern.
+- **`pkill -f <pattern>` over `ssh`/`pct exec` kills itself** — the wrapping shell's cmdline holds
+  the pattern. Use `[b]racketed` patterns, and keep the kill in its own invocation.
 - **`ss -ltn` is the only bind truth.** Ready-JSON endpoint strings are derived, not observed
   (fixed in the current patch, but always confirm with `ss`).
-- **Zombie listeners skew results** — kill `[s]quashfs-root` + `Xvfb` remnants before a clean
-  repro; a leftover from an earlier flagless run holds `0.0.0.0:6768`.
-- The `login1 Inhibit AccessDenied` and GPU `kTransientFailure` lines are benign in an LXC
-  (no logind session / software GL) — they do not abort the listener.
-- Cmdline of a live process: `tr '\0' ' ' < /proc/<pid>/cmdline` — the fastest way to see
-  whether the CLI translated flags to `--serve-*` for the Electron child.
-- **Phone loops "WebSocket closed" while the browser tile works** → the phone is on the
-  PUBLIC DNS path (cellular/VPN, or Wi-Fi with iCloud Private Relay/DoH) hitting the edge,
-  not the internal Traefik. A `*.astrateam.net` cert **cannot** cover
-  `*.portal.astrateam.net` — wildcards match ONE level. Check with
-  `openssl s_client -servername <app-host> -connect <edge-ip>:443`; the edge needs the
-  portal wildcard cert (or SNI passthrough) + WS routing. Discriminate layers: GET with
-  `?coder_session_token=` (Coder authn) vs a real WS client (`node -e` with `ws`) — curl
-  cannot do WS upgrades, its 200 there is meaningless.
-- **Phone shows paired in UI but can't connect after a workspace restart** → the QR carried
-  the per-build session token, which Coder revokes on rebuild (registry persists → UI looks
-  fine). The durable-token mint in the install script (§4) is the fix; if it regressed,
-  check `pairing-token` mtime across restarts — it must NOT change on a healthy boot.
+- **Zombie listeners skew results** — kill `[s]quashfs-root` + `Xvfb` remnants first; a leftover
+  flagless run holds `0.0.0.0:6768`. `login1 Inhibit AccessDenied` and GPU `kTransientFailure` are
+  benign in an LXC. To see whether the CLI translated flags for the Electron child:
+  `tr '\0' ' ' < /proc/<pid>/cmdline`.
+- **Phone loops "WebSocket closed" while the tile works** → the phone is on the PUBLIC DNS path
+  (cellular/VPN, or Wi-Fi with Private Relay/DoH) hitting the edge, not internal Traefik. A
+  `*.astrateam.net` cert **cannot** cover `*.portal.astrateam.net` — wildcards match ONE level.
+  Check `openssl s_client -servername <app-host> -connect <edge-ip>:443`. Discriminate layers with a
+  real WS client (`node -e` with `ws`), not curl — curl cannot upgrade, so its 200 means nothing.
+- **Phone paired in the UI but cannot connect after a restart** → the QR carried the per-build
+  session token, which Coder revokes on rebuild while the registry persists, so the UI looks fine.
+  §4's durable token is the fix; if it regressed, `pairing-token` mtime must NOT change on a
+  healthy boot.

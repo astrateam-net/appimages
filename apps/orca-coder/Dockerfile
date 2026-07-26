@@ -57,10 +57,12 @@ RUN git init -q . \
   && git fetch --depth 1 origin "refs/tags/${VERSION}" \
   && git checkout -q FETCH_HEAD
 
-# Apply the local patch series on top of the pristine tag. git apply fails the
-# build loudly if a patch no longer matches the pinned VERSION.
+# Apply the local patch series on top of the pristine tag. `set -e` is load-bearing:
+# without it the RUN takes the exit status of the LAST iteration, so a patch failing
+# mid-series passed the build whenever the final patch happened to apply — and the
+# real breakage surfaced later as a bogus typecheck error.
 COPY patches/ /patches/
-RUN for p in /patches/*.patch; do echo "applying $p"; git apply --verbose "$p"; done
+RUN set -e; for p in /patches/*.patch; do echo "applying $p"; git apply --verbose "$p"; done
 
 # Frozen lockfile keeps the build reproducible against upstream's committed lock.
 RUN pnpm install --frozen-lockfile

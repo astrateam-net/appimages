@@ -3,3 +3,6 @@
 
 # AppImage build export dir (buildx --output type=local)
 dist/
+
+# Python bytecode from the agent-tooling scripts under .claude/skills/
+__pycache__/

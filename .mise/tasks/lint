@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+#MISE description="Lint (and optionally fix) the agent-tooling Python under .claude/skills/"
+#MISE dir="{{config_root}}"
+#USAGE flag "--fix" help="Apply safe autofixes instead of only reporting"
+set -euo pipefail
+
+# Config lives in ruff.toml at the repo root; ruff discovers it from cwd.
+# Tracked + new-but-not-ignored, so a freshly written script is linted before it is
+# ever committed, while gitignored trees (.upstream/ reference clones) stay out.
+mapfile -t targets < <(git ls-files --cached --others --exclude-standard '*.py')
+if [[ ${#targets[@]} -eq 0 ]]; then
+  echo "no tracked .py files — nothing to lint"
+  exit 0
+fi
+
+if [[ "${usage_fix:-}" == "true" ]]; then
+  ruff check --fix "${targets[@]}"
+  ruff format "${targets[@]}"
+else
+  ruff check "${targets[@]}"
+  ruff format --check "${targets[@]}"
+fi

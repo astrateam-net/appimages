@@ -58,7 +58,7 @@ index 9a216f358..3f6b42c17 100644
    }
  }
 diff --git a/src/renderer/src/web/web-preload-api.ts b/src/renderer/src/web/web-preload-api.ts
-index 8c44b5cff..85d4226e4 100644
+index dbe4ae9ce..2b91eb09b 100644
 --- a/src/renderer/src/web/web-preload-api.ts
 +++ b/src/renderer/src/web/web-preload-api.ts
 @@ -7,6 +7,7 @@ import type {
@@ -69,7 +69,7 @@ index 8c44b5cff..85d4226e4 100644
  import type { AiVaultListArgs, AiVaultListResult } from '../../../shared/ai-vault-types'
  import type {
    AiVaultPrepareSessionResumeArgs,
-@@ -4023,11 +4089,38 @@ async function resolveRuntimeWorktreeByPath(
+@@ -4039,11 +4040,38 @@ async function resolveRuntimeWorktreeByPath(
      .filter((entry) => entry.relativePath !== null)
      .sort((a, b) => b.worktree.path.length - a.worktree.path.length)[0]
    if (!match) {

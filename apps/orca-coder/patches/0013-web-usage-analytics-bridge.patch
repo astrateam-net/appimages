@@ -65,20 +65,29 @@ index 6142dc985..9f7a9d318 100644
      // Why: floatingWorkspace.resolveCwd authorizes an external path and
      // grantDirectory writes a trusted-directory grant into settings — both are
 diff --git a/src/main/runtime/orca-runtime.ts b/src/main/runtime/orca-runtime.ts
-index 03f9f8768..fd53addc8 100644
+index 03f9f8768..f6bdfcaa7 100644
 --- a/src/main/runtime/orca-runtime.ts
 +++ b/src/main/runtime/orca-runtime.ts
-@@ -2445,6 +2445,37 @@ async function hasLocalWorktreeBaseRef(
+@@ -196,6 +196,7 @@ import {
+ import type { SshConnectionState } from '../../shared/ssh-types'
+ import { getPublicSshState } from './public-ssh-state'
+ import { closeTerminalTabInWorkspaceSession } from '../../shared/workspace-session-terminal-tab-close'
++import type { RuntimeUsageProvider } from '../../shared/runtime-usage-providers'
+ import type {
+   LinearCurrentIssueContextHints,
+   LinearAttachResult,
+@@ -2445,6 +2446,38 @@ async function hasLocalWorktreeBaseRef(
    )
  }
  
 +// Why: one list, so a fourth token-analytics provider is a registry entry in
 +// main/index.ts plus a name here — never another RPC method or preload stub.
-+// Grok is deliberately absent: it is subscription rate-limit data behind
-+// rateLimits.*/grokAccounts.*, which the web preload already implements.
-+export const RUNTIME_USAGE_PROVIDERS = ['claude', 'codex', 'openCode'] as const
-+
-+export type RuntimeUsageProvider = (typeof RUNTIME_USAGE_PROVIDERS)[number]
++// Declared in a leaf module so rpc/methods/usage.ts can VALUE-import it without closing
++// an import cycle back into this file. Re-exported here for existing consumers; the
++// companion `import type` above keeps the name in local scope (a bare `export type`
++// re-export does not, and this file uses RuntimeUsageProvider at 3 call sites).
++export { RUNTIME_USAGE_PROVIDERS } from '../../shared/runtime-usage-providers'
++export type { RuntimeUsageProvider } from '../../shared/runtime-usage-providers'
 +
 +export type RuntimeUsageScope = 'orca' | 'all'
 +export type RuntimeUsageRange = '7d' | '30d' | '90d' | 'all'
@@ -106,7 +115,7 @@ index 03f9f8768..fd53addc8 100644
  export class OrcaRuntimeService {
    private readonly runtimeId = randomUUID()
    private readonly startedAt = Date.now()
-@@ -2969,6 +3000,14 @@ export class OrcaRuntimeService {
+@@ -2969,6 +3002,14 @@ export class OrcaRuntimeService {
        buildAgentHookPtyEnv?: () => Record<string, string>
        getDesktopWindowStatus?: () => RuntimeDesktopWindowStatus
        agentSessionClaimSigner?: AgentSessionClaimSigner
@@ -121,7 +130,7 @@ index 03f9f8768..fd53addc8 100644
      }
    ) {
      this.store = store
-@@ -3005,6 +3044,7 @@ export class OrcaRuntimeService {
+@@ -3005,6 +3046,7 @@ export class OrcaRuntimeService {
      this.onTerminalAgentStatus = deps?.onTerminalAgentStatus ?? null
      this.buildAgentHookPtyEnv = deps?.buildAgentHookPtyEnv ?? null
      this.getDesktopWindowStatusFn = deps?.getDesktopWindowStatus ?? (() => 'openable')
@@ -129,7 +138,7 @@ index 03f9f8768..fd53addc8 100644
      this.prepareAiVaultSessionResumeFn = deps?.prepareAiVaultSessionResume ?? null
      this.agentSessionClaimSigner =
        deps?.agentSessionClaimSigner ?? createEphemeralAgentSessionClaimSigner(this.runtimeId)
-@@ -3438,6 +3478,21 @@ export class OrcaRuntimeService {
+@@ -3438,6 +3480,21 @@ export class OrcaRuntimeService {
      this.automationService = service
    }
  
@@ -173,13 +182,13 @@ index bf2a2737d..1d06d46e7 100644
  ]
 diff --git a/src/main/runtime/rpc/methods/usage.ts b/src/main/runtime/rpc/methods/usage.ts
 new file mode 100644
-index 000000000..399da3c6c
+index 000000000..fd6705018
 --- /dev/null
 +++ b/src/main/runtime/rpc/methods/usage.ts
 @@ -0,0 +1,86 @@
 +import { z } from 'zod'
 +import { defineMethod, type RpcMethod } from '../core'
-+import { RUNTIME_USAGE_PROVIDERS } from '../../orca-runtime'
++import { RUNTIME_USAGE_PROVIDERS } from '../../../../shared/runtime-usage-providers'
 +
 +// Why: the web client has no ipcRenderer, so `window.api.<provider>Usage.*` fell
 +// through to the preload fallback proxy and every call resolved to undefined. The
@@ -264,10 +273,10 @@ index 000000000..399da3c6c
 +  })
 +]
 diff --git a/src/renderer/src/web/web-preload-api.ts b/src/renderer/src/web/web-preload-api.ts
-index 8c44b5cff..85d4226e4 100644
+index 2b91eb09b..85d4226e4 100644
 --- a/src/renderer/src/web/web-preload-api.ts
 +++ b/src/renderer/src/web/web-preload-api.ts
-@@ -817,6 +818,9 @@ function createWebPreloadApi(): Partial<PreloadApi> {
+@@ -818,6 +818,9 @@ function createWebPreloadApi(): Partial<PreloadApi> {
      preflight: createPreflightApi(),
      notifications: createNotificationsApi(),
      rateLimits: createRateLimitsApi(),
@@ -277,7 +286,7 @@ index 8c44b5cff..85d4226e4 100644
      minimaxCredentials: createMiniMaxCredentialsApi(),
      grokAccounts: createGrokAccountsApi(),
      codexAccounts: createAccountsApi(),
-@@ -2947,6 +2951,52 @@ function createNotificationsApi(): NonNullable<Partial<PreloadApi>['notification
+@@ -2948,6 +2951,52 @@ function createNotificationsApi(): NonNullable<Partial<PreloadApi>['notification
    }
  }
  
@@ -330,3 +339,30 @@ index 8c44b5cff..85d4226e4 100644
  function createRateLimitsApi(): NonNullable<Partial<PreloadApi>['rateLimits']> {
    const empty: RateLimitState = {
      claude: null,
+diff --git a/src/shared/runtime-usage-providers.ts b/src/shared/runtime-usage-providers.ts
+new file mode 100644
+index 000000000..d0392de71
+--- /dev/null
++++ b/src/shared/runtime-usage-providers.ts
+@@ -0,0 +1,21 @@
++// Leaf module, deliberately dependency-free.
++//
++// Why this is not in orca-runtime.ts: `rpc/methods/usage.ts` needs the VALUE (it feeds
++// `z.enum(...)` at module scope), and every other file under `src/main/runtime/rpc/`
++// imports from orca-runtime.ts with `import type`, which TypeScript erases. A value
++// import was the series' only real runtime edge into that 33k-line module, and it closed
++// a cycle — orca-runtime.ts -> ipc/ssh.ts -> ssh-relay-session -> ssh-remote-orca-cli ->
++// rpc/dispatcher -> rpc/methods/index -> usage.ts -> back to orca-runtime.ts. Entering
++// through orca-runtime.ts meant `z.enum` evaluated before line 2452 had run, throwing
++// "Cannot convert undefined or null to object" at module load: 29 test files in
++// src/main/runtime failed to collect and 411 tests never ran. `orca serve` survived only
++// because main/index.ts happens to reach the cycle via ipc/ssh first.
++//
++// Keep this file free of imports. Anything that pulls a main-process module back in
++// recreates the cycle.
++//
++// Grok is deliberately absent: it is subscription rate-limit data behind
++// rateLimits.*/grokAccounts.*, which the web preload already implements.
++export const RUNTIME_USAGE_PROVIDERS = ['claude', 'codex', 'openCode'] as const
++
++export type RuntimeUsageProvider = (typeof RUNTIME_USAGE_PROVIDERS)[number]

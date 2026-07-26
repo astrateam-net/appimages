@@ -36,7 +36,16 @@ about scanning changed: the logs, the scanners and the stores were always on the
 pipe was missing. Grok is untouched; it is subscription rate-limit data behind
 `rateLimits.*`/`grokAccounts.*`, which the web preload already implements. `setEnabled` mutates the
 host, so all eight stay out of `MOBILE_RPC_METHOD_ALLOWLIST` — test-enforced.
+**Fixed 2026-07-26 (same patch, boundary amended):** the `RUNTIME_USAGE_PROVIDERS` value import
+from `orca-runtime.ts` closed an import cycle and `z.enum(...)` ran at module scope before the
+constant existed — `TypeError: Cannot convert undefined or null to object`, which cost **29 test
+files and 411 tests** in `src/main/runtime`. `orca serve` was unaffected only by import-order
+luck in `main/index.ts`. Moved to the leaf `src/shared/runtime-usage-providers.ts`,
+`orca-runtime.ts` re-exports it. After: 155 files / 2660 tests green, typecheck clean.
+Rules that now prevent it: `apps/orca-coder/CLAUDE.md` §5 and `orca-coder-patch-author`.
 
+**Placement:** shares symbols with 0002, 0003, 0004, 0006, 0007, 0009, 0010 — coupling recorded by audit; kept separate because each is a distinct capability. Re-review on the next bump.
+**Acceptance:** `mobile-rpc-allowlist.test.ts`
 ## 0012 — finish the web client's local-fallback floor
 
 `patches/0012-web-local-fallback-completion.patch`
@@ -53,7 +62,8 @@ accepts.
 
 **Fix:** the same floor at those three sites, plus a synthetic worktree record for the floating
 directory — the one the runtime already answers the sentinel with.
-
+**Placement:** no existing patch owned these symbols when it was written.
+**Acceptance:** **none — cannot be dropped, shrunk or merged until it has one.**
 ## 0011 — pin the web client's active runtime
 
 `patches/0011-web-active-runtime-pin.patch`
@@ -70,7 +80,8 @@ things, and only the second one drives ownership.
 (`readStoredWebRuntimeEnvironment` is singular, `resolveEnvironment` refuses any other selector), so
 for a browser the runtime itself serves this is a fact, not a preference. It stays a default: an
 explicit choice — including an explicit null — still wins.
-
+**Placement:** no existing patch owned these symbols when it was written.
+**Acceptance:** **none — cannot be dropped, shrunk or merged until it has one.**
 ## 0010 — deliver orchestration messages on a headless host
 
 `patches/0010-web-headless-orchestration-delivery.patch`
@@ -86,7 +97,8 @@ plus a PTY-record counterpart to `isCursorAgentOrchestrationTarget` so runtime-o
 resolve in the order `sendTerminal` already uses.
 
 Touch points: `main/runtime/orca-runtime.ts`, `main/runtime/orca-runtime.test.ts`.
-
+**Placement:** shares symbols with 0006, 0007, 0009, 0013 — coupling recorded by audit; kept separate because each is a distinct capability. Re-review on the next bump.
+**Acceptance:** `orca-runtime.test.ts`
 ## Base bump — `v1.4.155` → `v1.4.156`, patch 0000 dropped
 
 Upstream shipped the `DetachedHeadBadge` fix this series had been carrying: `v1.4.156` declares
@@ -178,7 +190,8 @@ Touch points: `lib/floating-workspace-runtime-owner.ts` (new), `lib/worktree-run
 `runtime/runtime-worktree-selector.ts`, `runtime/web-runtime-session.ts`, `web/web-preload-api.ts`,
 `lib/web-client-location.ts`, `main/runtime/orca-runtime.ts`,
 `main/runtime/rpc/methods/floating-workspace.ts`, `main/runtime/mobile-rpc-allowlist.test.ts`.
-
+**Placement:** shares symbols with 0002, 0003, 0004, 0006, 0007, 0010, 0013 — coupling recorded by audit; kept separate because each is a distinct capability. Re-review on the next bump.
+**Acceptance:** `mobile-rpc-allowlist.test.ts`, `floating-workspace-runtime-owner.test.ts`
 ## 0008 — open a worktree in a browser editor
 
 `patches/0008-web-open-in-browser-editor-urls.patch`
@@ -260,7 +273,8 @@ Seeded rows are parsed one at a time and normalized, so an unknown key (a newer 
 an older client) costs that row rather than the whole feature, and the entry cap and id dedupe
 apply to seeds too. `settings.get` is on the mobile allowlist, so it withholds `openInApplications`
 from phones — the rows carry deployment hostnames a phone has no menu to spend them on.
-
+**Placement:** no existing patch owned these symbols when it was written.
+**Acceptance:** `client-ui.test.ts`, `OpenInMenuSetting.test.ts`, `WorktreeOpenInMenu.test.tsx`, `external-editor-open-capability.test.ts`, `open-in-applications.test.ts`, `open-in-url-template.test.ts`, `runtime-seeded-settings.test.ts`
 ## Renamed: astraide → orca-coder; VERSION v1.4.153 → v1.4.155
 
 The app was called **astraide**, which implied a product we author. It never was one: what
@@ -333,7 +347,8 @@ those normalizers rather than against literals, so a third copy of the rule cann
 normalizer for them, and inventing one here would be this same mistake in the other direction.)
 
 Full evidence trail: [docs/settings-provisioning/](../../docs/settings-provisioning/README.md).
-
+**Placement:** shares symbols with 0006, 0009, 0010, 0013 — coupling recorded by audit; kept separate because each is a distinct capability. Re-review on the next bump.
+**Acceptance:** `runtime-seeded-settings.test.ts`
 ## 0006 — web-client floating-workspace directory picker
 
 `patches/0006-web-floating-workspace-dir-picker.patch`
@@ -375,7 +390,8 @@ Touch points: `main/runtime/rpc/methods/floating-workspace.ts` (+ `.test.ts`), `
 `preload/{api-types,index}.ts`, `web/web-preload-api.ts`,
 `renderer/src/components/settings/FloatingWorkspacePane.tsx` (+ `.test.tsx`),
 `main/runtime/mobile-rpc-allowlist.test.ts`.
-
+**Placement:** shares symbols with 0002, 0003, 0004, 0007, 0009, 0010, 0013 — coupling recorded by audit; kept separate because each is a distinct capability. Re-review on the next bump.
+**Acceptance:** `mobile-rpc-allowlist.test.ts`, `floating-workspace.test.ts`, `FloatingWorkspacePane.test.tsx`
 ## 0005 — web-client agent-skill CLI registration
 
 `patches/0005-web-cli-registration.patch`
@@ -409,7 +425,8 @@ installs it on first run — CLAUDE.md §2).
 Touch points: `src/main/runtime/rpc/methods/cli.ts` (+test), `src/main/ipc/cli.ts`,
 `src/main/runtime/rpc/methods/index.ts`, `src/main/runtime/mobile-rpc-allowlist.test.ts`,
 `src/renderer/src/web/web-preload-api.ts`.
-
+**Placement:** no existing patch owned these symbols when it was written.
+**Acceptance:** `mobile-rpc-allowlist.test.ts`, `cli.test.ts`
 ## 0004 — web-client resource manager
 
 `patches/0004-web-resource-manager.patch`
@@ -418,7 +435,8 @@ Resource Manager in the web client showed all zeros — the web preload `memory.
 was an empty-snapshot stub. Now routes to runtime `diagnostics.memory` (which phones
 already poll), so the tile shows the **workspace's** processes + host RAM/CPU. One-line
 stub→RPC reroute; falls back to the empty snapshot only when no environment is connected.
-
+**Placement:** shares symbols with 0002, 0003, 0006, 0009, 0013 — coupling recorded by audit; kept separate because each is a distinct capability. Re-review on the next bump.
+**Acceptance:** **none — cannot be dropped, shrunk or merged until it has one.**
 ## 0003 — web-client runtime share links
 
 `patches/0003-web-runtime-share-links.patch` · contract: CLAUDE.md §1
@@ -429,7 +447,8 @@ desktop-only, so a headless serve's grants were mintable by nobody. Adds
 `trustedMobilePairing` runtime-scope gate; never mobile-allowlisted — a phone minting a
 runtime grant would be scope escalation), and reframes Settings → Remote Orca Servers as
 "Share the connected server" in the web client.
-
+**Placement:** shares symbols with 0001, 0002, 0004, 0006, 0009, 0013 — coupling recorded by audit; kept separate because each is a distinct capability. Re-review on the next bump.
+**Acceptance:** `mobile-rpc-allowlist.test.ts`, `mobile-pairing.test.ts`
 ## 0002 — web-client mobile pairing
 
 `patches/0002-web-mobile-pairing.patch` · contract: CLAUDE.md §1 · **went live 2026-07-24**
@@ -441,7 +460,8 @@ runtime-scope only, strict params), pins connection mode `local-only`, and adver
 Coder subdomain wss URL (`?coder_session_token=…`) as the pairing endpoint — Coder is
 authn, Orca is authz + E2EE. Phone survives workspace restarts via the durable token minted
 by the install script (CLAUDE.md §4).
-
+**Placement:** shares symbols with 0001, 0003, 0004, 0006, 0009, 0013 — coupling recorded by audit; kept separate because each is a distinct capability. Re-review on the next bump.
+**Acceptance:** `mobile-rpc-allowlist.test.ts`, `mobile-pairing.test.ts`
 ## 0001 — trusted-proxy web session
 
 `patches/0001-serve-trusted-proxy-web-session.patch` · contract: CLAUDE.md §1
@@ -456,3 +476,5 @@ Also folds in **web-session device naming**: trusted-session devices are named
 `Web session <date>` (fixes 0001's own mint, which previously leaked the upstream
 `CLI <date>` default) so the shared-access list reads honestly: Web session / Runtime /
 Mobile.
+**Placement:** shares symbols with 0002, 0003 — coupling recorded by audit; kept separate because each is a distinct capability. Re-review on the next bump.
+**Acceptance:** **none — cannot be dropped, shrunk or merged until it has one.**
