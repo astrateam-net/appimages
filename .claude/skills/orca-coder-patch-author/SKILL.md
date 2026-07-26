@@ -32,8 +32,9 @@ none carries an upstream fix. See `apps/orca-coder/CLAUDE.md` §3.
 | 0006 web floating-workspace dir picker | `46e99470b → 8cb9c88a1` |
 | 0007 runtime-seeded settings | `8cb9c88a1 → 113626f5a` |
 | 0008 open-in browser editor URLs | `113626f5a → 847dc1a6e` |
-| 0009 floating workspace runtime owner | `847dc1a6e → 3d6c32c68` |
-| next | `<prev-boundary> → <new-commit>` → `0010-…` |
+| 0009 floating workspace runtime owner | `847dc1a6e → 58baccec7` |
+| 0010 headless orchestration delivery | `58baccec7 → 38a4982d1` |
+| next | `<prev-boundary> → <new-commit>` → `0011-…` |
 
 **Rebasing the series onto a new tag:** `git branch -f backup/<old> HEAD` first, then
 `git rebase --onto <newtag> <oldtag> patch/trusted-proxy-v2`, re-export every boundary, and

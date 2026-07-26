@@ -38,10 +38,18 @@ index 0ee5913e0..6142dc985 100644
    })
  })
 diff --git a/src/main/runtime/orca-runtime.ts b/src/main/runtime/orca-runtime.ts
-index a25d3927c..e079737c1 100644
+index a25d3927c..c444e1e5c 100644
 --- a/src/main/runtime/orca-runtime.ts
 +++ b/src/main/runtime/orca-runtime.ts
-@@ -771,6 +771,7 @@ import {
+@@ -316,6 +316,7 @@ import {
+   sharesResolvedWorktreeLineageBoundary
+ } from '../../shared/resolved-worktree-lineage'
+ import { folderWorkspaceToWorktree } from '../../shared/folder-workspace-worktree'
++import { floatingWorkspaceToWorktree } from '../../shared/floating-workspace-worktree'
+ import type {
+   FolderWorkspacePathStatus,
+   FolderWorkspacePathStatusRequest
+@@ -771,6 +772,7 @@ import {
  import type { AddWorktreeOptions, AddWorktreeResult } from '../git/worktree'
  import { isENOENT } from '../ipc/filesystem-auth'
  import {
@@ -49,7 +57,27 @@ index a25d3927c..e079737c1 100644
    resolveFloatingTerminalCwd as resolveFloatingTerminalCwdOnHost,
    grantFloatingWorkspaceDirectory as grantFloatingWorkspaceDirectoryOnHost,
    type FloatingWorkspaceDirectoryStore
-@@ -15225,6 +15226,12 @@ export class OrcaRuntimeService {
+@@ -7173,6 +7175,19 @@ export class OrcaRuntimeService {
+     worktree: ResolvedWorktree
+     connectionId?: string
+   }> {
++    // Why: the floating sentinel resolves only in resolveTerminalWorkspaceLaunchScope;
++    // resolveWorktreeSelector below searches real worktrees and answers
++    // 'selector_not_found'. A web client's floating markdown notes live on THIS host, so
++    // give file operations the app-owned floating workspace directory as their root —
++    // the same directory the desktop app:getFloatingMarkdownDirectory handler creates.
++    if (
++      worktreeSelector === FLOATING_TERMINAL_WORKTREE_ID ||
++      worktreeSelector === `id:${FLOATING_TERMINAL_WORKTREE_ID}`
++    ) {
++      const floatingPath = await ensureDefaultFloatingWorkspacePathOnHost()
++      return { worktree: this.toResolvedWorktree(floatingWorkspaceToWorktree(floatingPath)) }
++    }
++
+     const folderScope = await this.resolveFolderWorkspaceLaunchScope(worktreeSelector)
+     if (folderScope?.folderWorkspace) {
+       return {
+@@ -15225,6 +15240,12 @@ export class OrcaRuntimeService {
      await grantFloatingWorkspaceDirectoryOnHost(this.floatingWorkspaceDirectoryStore(), dirPath)
    }
  
@@ -62,7 +90,7 @@ index a25d3927c..e079737c1 100644
    async browseServerDir(pathValue: string): Promise<{ resolvedPath: string; entries: DirEntry[] }> {
      const dirPath = resolveServerBrowsePath(pathValue)
      const dirStat = await stat(dirPath)
-@@ -21651,7 +21658,17 @@ export class OrcaRuntimeService {
+@@ -21651,7 +21672,17 @@ export class OrcaRuntimeService {
          // Why: `orca serve` exposes the local runtime without a renderer
          // window. Renderer-backed Codex terminals are preferred for the app,
          // but headless CLI users still need a usable terminal handle.
@@ -81,6 +109,20 @@ index a25d3927c..e079737c1 100644
  
      if (shouldCreateInBackground) {
        if (!this.ptyController?.spawn) {
+@@ -24051,7 +24082,12 @@ export class OrcaRuntimeService {
+   }
+ 
+   private folderWorkspaceToResolvedWorktree(folderWorkspace: FolderWorkspace): ResolvedWorktree {
+-    const worktree = folderWorkspaceToWorktree(folderWorkspace)
++    return this.toResolvedWorktree(folderWorkspaceToWorktree(folderWorkspace))
++  }
++
++  // Why: shared by the folder-workspace and floating-workspace paths — both present a
++  // plain directory as a worktree, with no lineage and no real git checkout behind it.
++  private toResolvedWorktree(worktree: Worktree): ResolvedWorktree {
+     return {
+       ...worktree,
+       parentWorktreeId: null,
 diff --git a/src/main/runtime/rpc/methods/floating-workspace.ts b/src/main/runtime/rpc/methods/floating-workspace.ts
 index ee4e41897..676edba45 100644
 --- a/src/main/runtime/rpc/methods/floating-workspace.ts
@@ -102,6 +144,34 @@ index ee4e41897..676edba45 100644
    defineMethod({
      name: 'floatingWorkspace.grantDirectory',
      params: GrantFloatingWorkspaceDirectoryParams,
+diff --git a/src/renderer/src/components/browser-pane/BrowserPane.tsx b/src/renderer/src/components/browser-pane/BrowserPane.tsx
+index 55e3a67a7..0c87056fc 100644
+--- a/src/renderer/src/components/browser-pane/BrowserPane.tsx
++++ b/src/renderer/src/components/browser-pane/BrowserPane.tsx
+@@ -156,7 +156,7 @@ import {
+   RuntimeRpcCallError,
+   type RuntimeClientTarget
+ } from '@/runtime/runtime-rpc-client'
+-import { toRuntimeWorktreeSelector } from '@/runtime/runtime-worktree-selector'
++import { toRuntimeBrowserWorktreeSelector } from '@/runtime/runtime-worktree-selector'
+ import type {
+   BrowserBackResult,
+   BrowserGotoResult,
+@@ -914,7 +914,13 @@ function RemoteBrowserPagePane({
+   const isActiveRef = useRef(isActive)
+   const currentBrowserTabIdRef = useRef(browserTab.id)
+   const currentBrowserTabUrlRef = useRef(browserTab.url)
+-  const runtimeWorktree = useMemo(() => toRuntimeWorktreeSelector(worktreeId), [worktreeId])
++  // Why: `undefined` for the floating workspace. Every browser RPC below carries this
++  // selector, and the floating sentinel has no worktree record on the runtime — it
++  // resolves only in resolveTerminalWorkspaceLaunchScope, so resolveWorktreeSelector
++  // answers 'selector_not_found'. The pane mounted (tabCreate already omits it) and
++  // then the screencast subscribe failed, which is the error shown inside the pane.
++  // `worktree` is OptionalString on every one of these schemas; absent means unscoped.
++  const runtimeWorktree = useMemo(() => toRuntimeBrowserWorktreeSelector(worktreeId), [worktreeId])
+   const activeRuntimeEnvironmentIdRef = useRef<string | null>(activeRuntimeEnvironmentId)
+   const startRemoteStreamRef = useRef<
+     (pageId: string) => Promise<RemoteBrowserStreamSubscription | null>
 diff --git a/src/renderer/src/components/floating-terminal/FloatingTerminalPanel.tsx b/src/renderer/src/components/floating-terminal/FloatingTerminalPanel.tsx
 index b391bf4a4..7058c7f4f 100644
 --- a/src/renderer/src/components/floating-terminal/FloatingTerminalPanel.tsx
@@ -880,3 +950,57 @@ index 1d284e6c5..8c44b5cff 100644
        pickFloatingMarkdownDocument: () => Promise.resolve(null),
        // Why: the web tile has no native OS dialog — the picker is the in-app
        // host-fs browser (RemoteFileBrowser), so this native entry stays a no-op.
+diff --git a/src/shared/floating-workspace-worktree.ts b/src/shared/floating-workspace-worktree.ts
+new file mode 100644
+index 000000000..221a24174
+--- /dev/null
++++ b/src/shared/floating-workspace-worktree.ts
+@@ -0,0 +1,48 @@
++import { FLOATING_TERMINAL_WORKTREE_ID } from './constants'
++import type { Worktree } from './types'
++
++/**
++ * A worktree-shaped record for the floating workspace, rooted at the app-owned floating
++ * workspace directory on the host.
++ *
++ * Why this exists: the floating sentinel is terminal-only on the runtime.
++ * `resolveTerminalWorkspaceLaunchScope` answers it with a launch scope, but every other
++ * workspace API resolves through `resolveWorktreeSelector`, which searches real worktrees
++ * and throws `selector_not_found`. That is what a web client hit the moment it tried to
++ * create or read a floating markdown note, since file RPCs address `worktree` +
++ * `relativePath` and the server needs a root to join them against.
++ *
++ * Shape mirrors `folderWorkspaceToWorktree` — the existing precedent for presenting a
++ * non-repo directory as a worktree. Git fields are empty for the same reason they are
++ * there: this is a plain directory, not a checkout.
++ */
++export function floatingWorkspaceToWorktree(folderPath: string): Worktree {
++  return {
++    id: FLOATING_TERMINAL_WORKTREE_ID,
++    repoId: `floating-workspace:${FLOATING_TERMINAL_WORKTREE_ID}`,
++    displayName: 'Floating Workspace',
++    comment: '',
++    linkedIssue: null,
++    linkedPR: null,
++    linkedLinearIssue: null,
++    linkedGitLabMR: null,
++    linkedGitLabIssue: null,
++    linkedBitbucketPR: null,
++    linkedAzureDevOpsPR: null,
++    linkedGiteaPR: null,
++    isArchived: false,
++    isUnread: false,
++    isPinned: false,
++    sortOrder: 0,
++    manualOrder: 0,
++    lastActivityAt: 0,
++    pendingFirstAgentMessageRename: false,
++    firstAgentMessageRenameError: null,
++    path: folderPath,
++    head: '',
++    branch: '',
++    isBare: false,
++    isSparse: false,
++    isMainWorktree: false
++  }
++}

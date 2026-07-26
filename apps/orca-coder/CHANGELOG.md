@@ -17,6 +17,22 @@ throw-on-call. Most "works on desktop, dead in the tile" reports are one of thos
 
 ---
 
+## 0010 — deliver orchestration messages on a headless host
+
+`patches/0010-web-headless-orchestration-delivery.patch`
+
+**Symptom:** in the tile, orchestration messages were stored but never handed to a waiting
+agent, so coordination degraded to "go tell each agent to check its inbox".
+
+**Cause:** `orca serve` publishes an empty renderer graph (`HEADLESS_RUNTIME_WINDOW_ID`), and the
+push-on-idle delivery path was driven from that graph — so it never fired.
+
+**Fix:** `deliverPendingMessagesForPty`, driven from the same idle triggers the leaf loop uses,
+plus a PTY-record counterpart to `isCursorAgentOrchestrationTarget` so runtime-owned handles
+resolve in the order `sendTerminal` already uses.
+
+Touch points: `main/runtime/orca-runtime.ts`, `main/runtime/orca-runtime.test.ts`.
+
 ## Base bump — `v1.4.155` → `v1.4.156`, patch 0000 dropped
 
 Upstream shipped the `DetachedHeadBadge` fix this series had been carrying: `v1.4.156` declares
@@ -84,6 +100,22 @@ ownership resolves local in a web client, rather than a rejecting stub / dead pa
 failing for *ordinary* worktrees is a real open bug (blank browser, *"Couldn't verify which host
 owns this file"*, "No files in this workspace" — one missing answer, three surfaces). The editor
 cannot be floored; it fails closed by design. See `docs/web-client-local-fallbacks/README.md` §9.
+
+**Follow-up after live test (`selector_not_found`):** routing the floating workspace at the
+runtime exposed the next layer — the floating sentinel is *terminal-only* on the server. It
+resolves in `resolveTerminalWorkspaceLaunchScope` (why terminals worked immediately) but every
+other workspace API goes through `resolveWorktreeSelector`, which searches real worktrees and
+throws. Two fixes, both in this patch:
+
+- **Browser:** `BrowserPane` carries the selector on ~15 RPCs. `tabCreate` already omitted it, so
+  the tab appeared and then the screencast subscribe failed — that error rendered *inside* the
+  pane under "Remote browser". One derivation site now uses `toRuntimeBrowserWorktreeSelector`;
+  `worktree` is `OptionalString` on every one of those schemas.
+- **Markdown:** file RPCs address `worktree` + `relativePath`, so "unscoped" is meaningless — the
+  server needs a root. `resolveRuntimeFileTarget` now answers the floating sentinel with the
+  app-owned floating workspace directory, via a `floatingWorkspaceToWorktree` helper mirroring the
+  existing `folderWorkspaceToWorktree` precedent for presenting a plain directory as a worktree.
+  `folderWorkspaceToResolvedWorktree` was reduced to a call to the extracted `toResolvedWorktree`.
 
 Touch points: `lib/floating-workspace-runtime-owner.ts` (new), `lib/worktree-runtime-owner.ts`,
 `lib/editor-file-operation-owner.ts`, `lib/floating-workspace-tab-creation.ts`,

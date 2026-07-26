@@ -199,6 +199,32 @@ Both halves now mirror what the desktop app does:
   clicked file *is* the selection. Omit the prop and it behaves exactly as before, so the
   "Add a project" flow is untouched.
 
+## 8b. `selector_not_found` — the second layer, found by testing
+
+Routing the floating workspace at the runtime worked, and immediately exposed the next layer.
+The floating terminal came up; the browser pane reached the runtime ("Remote browser — rendered
+from the active runtime server") and then showed `selector_not_found`; New Markdown showed the
+same. That is not a CSS selector — it is Orca's *worktree* selector.
+
+**The floating sentinel is terminal-only on the server.** It resolves in
+`resolveTerminalWorkspaceLaunchScope` (which is exactly why terminals worked first), and every
+other workspace API goes through `resolveWorktreeSelector`, which searches real worktrees and
+throws. Upstream states this outright in a comment: *"the floating sentinel is terminal-only — no
+backing repo/worktree record for other workspace APIs."* That comment was read during the original
+diagnosis and its consequence was not followed through.
+
+- **Browser** — client-side. `BrowserPane` derives one selector used by ~15 RPCs. `tabCreate`
+  already omitted it, so the tab appeared and the *screencast subscribe* failed, which is why the
+  error rendered inside a pane that otherwise looked correct.
+- **Markdown** — server-side, and it could not be fixed the same way: file RPCs address
+  `worktree` + `relativePath`, so omitting the worktree leaves the server with no root to join
+  against. `resolveRuntimeFileTarget` now answers the sentinel with the app-owned floating
+  workspace directory.
+
+**Worth noting how this was found.** Not by reading — by deploying and clicking. The terminal
+working while the browser failed, both on the same ownership fix, is what localized it to the
+server's selector resolution rather than the client's routing.
+
 ## 9. Still broken — the ordinary-workspace ownership failure
 
 **This is now the biggest open item, and it is bigger than the floating workspace.** In an
