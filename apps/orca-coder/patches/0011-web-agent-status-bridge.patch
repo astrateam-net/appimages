@@ -1,0 +1,430 @@
+diff --git a/src/main/index.ts b/src/main/index.ts
+index 7845a4ef9..37aa2d16b 100644
+--- a/src/main/index.ts
++++ b/src/main/index.ts
+@@ -2052,6 +2052,9 @@ app.whenReady().then(async () => {
+     // Why: worktree.ps pulls hook-reported agent status (same source as the desktop sidebar) at query time so mobile shows the same agents.
+     getAgentStatusSnapshot: () =>
+       agentHookServer.getStatusSnapshot().filter((entry) => entry.providerSessionOnly !== true),
++    // Why: the push half of the same source — `agentStatus:set` relays through mainWindow, which
++    // serve has none of, so a paired web client needs its own tap on the hook server.
++    subscribeAgentStatusChanges: (listener) => agentHookServer.subscribeStatusChanges(listener),
+     // Why: source codex-home here (runs in window AND serve) so aiVault.listSessions includes managed-Codex sessions; registerCoreHandlers is window-only.
+     getAdditionalAiVaultCodexHomePaths: () =>
+       codexRuntimeHome ? codexRuntimeHome.getHostCodexHomePathsForSessionDiscovery() : [],
+diff --git a/src/main/runtime/mobile-rpc-allowlist.test.ts b/src/main/runtime/mobile-rpc-allowlist.test.ts
+index 9f7a9d318..12a3ccea2 100644
+--- a/src/main/runtime/mobile-rpc-allowlist.test.ts
++++ b/src/main/runtime/mobile-rpc-allowlist.test.ts
+@@ -230,6 +230,31 @@ describe('mobile RPC allowlist', () => {
+     ).toEqual([])
+   })
+ 
++  it('does not expose agent-status hook rows to mobile credentials', () => {
++    // Why: hook rows carry the agent's prompt, tool input and transcript path.
++    // Phones already receive agent status through the mobile session tabs
++    // snapshot, so this namespace stays runtime-scope only.
++    const allowed = mobileRpcAllowlist()
++    expect(
++      ['agentStatus.getSnapshot', 'agentStatus.subscribe', 'agentStatus.unsubscribe'].filter(
++        (method) => allowed.has(method)
++      )
++    ).toEqual([])
++  })
++
++  it('registers the runtime-only agent-status methods', () => {
++    // Why: the web client's native chat resolves its session id + transcript path
++    // from these; dropping one from ALL_RPC_METHODS silently returns the chat view
++    // to "Start a chat with <agent>" with no error anywhere.
++    const registered = registeredRuntimeMethods()
++    const missing = [
++      'agentStatus.getSnapshot',
++      'agentStatus.subscribe',
++      'agentStatus.unsubscribe'
++    ].filter((method) => !registered.has(method))
++    expect(missing).toEqual([])
++  })
++
+   it('registers the runtime-only floating-workspace directory methods', () => {
+     // Why: the web client routes the Terminal Directory picker + terminal cwd
+     // through these; dropping one from ALL_RPC_METHODS silently reverts the
+diff --git a/src/main/runtime/orca-runtime.ts b/src/main/runtime/orca-runtime.ts
+index f6bdfcaa7..5d3e45852 100644
+--- a/src/main/runtime/orca-runtime.ts
++++ b/src/main/runtime/orca-runtime.ts
+@@ -772,6 +772,8 @@ import {
+ } from '../git/worktree'
+ import type { AddWorktreeOptions, AddWorktreeResult } from '../git/worktree'
+ import { isENOENT } from '../ipc/filesystem-auth'
++// Why: leaf module — its only tie back here is `import type`, so no runtime cycle (see 0013).
++import { enrichAgentStatusIpcPayload } from '../ipc/agent-status-ipc-boundary'
+ import {
+   ensureDefaultFloatingWorkspacePath as ensureDefaultFloatingWorkspacePathOnHost,
+   resolveFloatingTerminalCwd as resolveFloatingTerminalCwdOnHost,
+@@ -2955,6 +2957,9 @@ export class OrcaRuntimeService {
+   private readonly onTerminalSideEffects: ((batch: TerminalSideEffectBatch) => void) | null
+   private terminalSideEffectConsumerAvailable = false
+   private readonly getAgentStatusSnapshotFn: (() => AgentStatusIpcPayload[]) | null
++  private readonly subscribeAgentStatusChangesFn:
++    | ((listener: () => void) => () => void)
++    | null
+   private readonly buildAgentHookPtyEnv: (() => Record<string, string>) | null
+   private readonly getDesktopWindowStatusFn: () => RuntimeDesktopWindowStatus
+   private readonly prepareAiVaultSessionResumeFn:
+@@ -2991,6 +2996,9 @@ export class OrcaRuntimeService {
+       // terminal output. worktree.ps reads this at query time so mobile shows the
+       // same inline agent rows the desktop sidebar does — same source, 1:1.
+       getAgentStatusSnapshot?: () => AgentStatusIpcPayload[]
++      // Why: same source, push side — lets a paired web client mirror the desktop's
++      // `agentStatus:set` IPC without main needing a BrowserWindow to relay through.
++      subscribeAgentStatusChanges?: (listener: () => void) => () => void
+       // Why: codex-home paths for the Agent Session History scan must be sourced
+       // here, not via the window-only registerCoreHandlers path — that path never
+       // runs under `orca serve`, so remote/SSH hosts would silently drop
+@@ -3026,6 +3034,7 @@ export class OrcaRuntimeService {
+       this.agentDetector = new AgentDetector(stats)
+     }
+     this.getAgentStatusSnapshotFn = deps?.getAgentStatusSnapshot ?? null
++    this.subscribeAgentStatusChangesFn = deps?.subscribeAgentStatusChanges ?? null
+     // Why: configure the shared AiVault scan cache from a serve-mode-reachable
+     // seam so the aiVault.listSessions RPC includes managed-Codex + WSL sessions
+     // even on headless `orca serve` hosts where registerCoreHandlers never runs.
+@@ -26594,6 +26603,18 @@ export class OrcaRuntimeService {
+     return this.getTerminalHandleForPaneKey(paneKey) ?? undefined
+   }
+ 
++  // Why: `agentStatus:getSnapshot` IPC needs a BrowserWindow, which `orca serve` never opens, so a
++  // paired client had no way to read hook rows at all. Enriches exactly as that handler does.
++  getAgentStatusIpcRows(): AgentStatusIpcPayload[] {
++    return (this.getAgentStatusSnapshotFn?.() ?? []).map((entry) =>
++      enrichAgentStatusIpcPayload(entry, this)
++    )
++  }
++
++  subscribeAgentStatusRows(listener: () => void): () => void {
++    return this.subscribeAgentStatusChangesFn?.(listener) ?? ((): void => {})
++  }
++
+   getAgentStatusLaunchConfigForPaneKey(
+     paneKey: string,
+     args?: { launchToken?: string }
+diff --git a/src/main/runtime/rpc/methods/agent-status.test.ts b/src/main/runtime/rpc/methods/agent-status.test.ts
+new file mode 100644
+index 000000000..60913bd16
+--- /dev/null
++++ b/src/main/runtime/rpc/methods/agent-status.test.ts
+@@ -0,0 +1,82 @@
++import { describe, expect, it, vi } from 'vitest'
++import type { AgentStatusIpcPayload } from '../../../../shared/agent-status-types'
++import type { RpcContext } from '../core'
++import { AGENT_STATUS_METHODS } from './agent-status'
++
++// The identity native chat resolves a transcript from; without it the view renders its empty state.
++const HOOK_ROW = {
++  paneKey: 'tab-1:leaf-1',
++  state: 'done',
++  prompt: 'audit the patches',
++  agentType: 'claude',
++  connectionId: null,
++  receivedAt: 10,
++  stateStartedAt: 10,
++  providerSession: { id: 'sess-1', transcriptPath: '/home/coder/.claude/sess-1.jsonl' }
++} as unknown as AgentStatusIpcPayload
++
++function handlerFor(name: string): (...args: never[]) => Promise<unknown> {
++  const method = AGENT_STATUS_METHODS.find((candidate) => candidate.name === name)
++  if (!method) {
++    throw new Error(`${name} not registered`)
++  }
++  return method.handler as (...args: never[]) => Promise<unknown>
++}
++
++describe('agentStatus RPC', () => {
++  it('hands a paired client the hook rows carrying transcript identity', async () => {
++    const handler = handlerFor('agentStatus.getSnapshot') as (
++      params: unknown,
++      ctx: RpcContext
++    ) => Promise<{ entries: AgentStatusIpcPayload[] }>
++
++    const result = await handler(null, {
++      runtime: { getAgentStatusIpcRows: () => [HOOK_ROW] } as unknown as RpcContext['runtime']
++    })
++
++    expect(result.entries).toHaveLength(1)
++    expect(result.entries[0]!.providerSession).toEqual({
++      id: 'sess-1',
++      transcriptPath: '/home/coder/.claude/sess-1.jsonl'
++    })
++  })
++
++  it('republishes the whole snapshot on each hook change, so a clear is an absent paneKey', async () => {
++    const handler = handlerFor('agentStatus.subscribe') as (
++      params: unknown,
++      ctx: RpcContext,
++      emit: (value: unknown) => void
++    ) => Promise<void>
++
++    const rows: AgentStatusIpcPayload[] = [HOOK_ROW]
++    let notify = (): void => {}
++    const emitted: { type?: string; entries?: AgentStatusIpcPayload[] }[] = []
++
++    await handler(
++      {},
++      {
++        runtime: {
++          getAgentStatusIpcRows: () => [...rows],
++          subscribeAgentStatusRows: (listener: () => void) => {
++            notify = listener
++            return () => {}
++          },
++          registerSubscriptionCleanup: vi.fn(),
++          cleanupSubscription: vi.fn(),
++          cleanupSubscriptionsByPrefix: vi.fn()
++        } as unknown as RpcContext['runtime'],
++        connectionId: 'connection-1'
++      },
++      (value) => emitted.push(value as { type?: string; entries?: AgentStatusIpcPayload[] })
++    )
++
++    expect(emitted).toHaveLength(1)
++    expect(emitted[0]!.entries).toHaveLength(1)
++
++    rows.length = 0
++    notify()
++
++    expect(emitted).toHaveLength(2)
++    expect(emitted[1]!.entries).toEqual([])
++  })
++})
+diff --git a/src/main/runtime/rpc/methods/agent-status.ts b/src/main/runtime/rpc/methods/agent-status.ts
+new file mode 100644
+index 000000000..6d4bf4ba6
+--- /dev/null
++++ b/src/main/runtime/rpc/methods/agent-status.ts
+@@ -0,0 +1,66 @@
++import { z } from 'zod'
++import { defineMethod, defineStreamingMethod, type RpcAnyMethod } from '../core'
++
++// Why: the desktop renderer gets hook rows over `agentStatus:*` IPC, which needs a BrowserWindow
++// `orca serve` never opens — so the web preload stubbed the namespace and native chat could not
++// resolve providerSession. Mirrors those handlers 1:1 so the web client feeds the renderer's
++// existing setAgentStatus path. Runtime-scope only: rows carry prompts, tool input and transcript
++// paths, and phones already receive agent status through the mobile session tabs snapshot.
++
++const AgentStatusSubscription = z
++  .object({ subscriptionId: z.string().min(1).max(200).optional() })
++  .strict()
++
++function subscriptionKey(connectionId: string | undefined, subscriptionId?: string): string {
++  return `agentStatus:${connectionId ?? 'local'}:${subscriptionId ?? 'default'}`
++}
++
++export const AGENT_STATUS_METHODS: readonly RpcAnyMethod[] = [
++  defineMethod({
++    name: 'agentStatus.getSnapshot',
++    params: null,
++    handler: async (_params, { runtime }) => ({ entries: runtime.getAgentStatusIpcRows() })
++  }),
++  defineStreamingMethod({
++    name: 'agentStatus.subscribe',
++    params: AgentStatusSubscription,
++    handler: async (params, { runtime, connectionId }, emit) => {
++      let closed = false
++      let unsubscribe = (): void => {}
++      runtime.registerSubscriptionCleanup(
++        subscriptionKey(connectionId, params.subscriptionId),
++        () => {
++          closed = true
++          unsubscribe()
++          emit({ type: 'end' })
++        },
++        connectionId
++      )
++      if (closed) {
++        return
++      }
++      emit({ type: 'snapshot', entries: runtime.getAgentStatusIpcRows() })
++      // Why: the hook server's change signal carries no payload, so republish the whole snapshot
++      // and let the client diff — that also makes a clear observable as an absent paneKey, without
++      // taking over main's single-listener clear channel.
++      unsubscribe = runtime.subscribeAgentStatusRows(() => {
++        if (closed) {
++          return
++        }
++        emit({ type: 'snapshot', entries: runtime.getAgentStatusIpcRows() })
++      })
++    }
++  }),
++  defineMethod({
++    name: 'agentStatus.unsubscribe',
++    params: AgentStatusSubscription,
++    handler: async (params, { runtime, connectionId }) => {
++      if (params.subscriptionId) {
++        runtime.cleanupSubscription(subscriptionKey(connectionId, params.subscriptionId))
++        return { unsubscribed: true }
++      }
++      runtime.cleanupSubscriptionsByPrefix(`agentStatus:${connectionId ?? 'local'}:`)
++      return { unsubscribed: true }
++    }
++  })
++]
+diff --git a/src/main/runtime/rpc/methods/index.ts b/src/main/runtime/rpc/methods/index.ts
+index 1d06d46e7..e591d484d 100644
+--- a/src/main/runtime/rpc/methods/index.ts
++++ b/src/main/runtime/rpc/methods/index.ts
+@@ -18,6 +18,7 @@ import { PREFLIGHT_METHODS } from './preflight'
+ import { COMPUTER_METHODS } from './computer'
+ import { SESSION_TAB_METHODS } from './session-tabs'
+ import { NATIVE_CHAT_METHODS } from './native-chat'
++import { AGENT_STATUS_METHODS } from './agent-status'
+ import { FILE_METHODS } from './files'
+ import { GIT_METHODS } from './git'
+ import { GITHUB_METHODS } from './github'
+@@ -67,6 +68,7 @@ export const ALL_RPC_METHODS: readonly RpcAnyMethod[] = [
+   ...COMPUTER_METHODS,
+   ...SESSION_TAB_METHODS,
+   ...NATIVE_CHAT_METHODS,
++  ...AGENT_STATUS_METHODS,
+   ...FILE_METHODS,
+   ...GIT_METHODS,
+   ...GITHUB_METHODS,
+diff --git a/src/renderer/src/web/web-preload-api.ts b/src/renderer/src/web/web-preload-api.ts
+index 82ef2728d..b42a0cd51 100644
+--- a/src/renderer/src/web/web-preload-api.ts
++++ b/src/renderer/src/web/web-preload-api.ts
+@@ -146,6 +146,10 @@ import {
+   parseRuntimeNativeChatTurnLifecycle
+ } from '@/components/native-chat/native-chat-runtime-contract'
+ import { createWebFileMutationMethods } from './web-file-mutation-methods'
++import type {
++  AgentStatusClearIpcPayload,
++  AgentStatusIpcPayload
++} from '../../../shared/agent-status-types'
+ 
+ const SETTINGS_STORAGE_KEY = 'orca.web.settings.v1'
+ const UI_STORAGE_KEY = 'orca.web.ui.v1'
+@@ -851,9 +855,7 @@ function createWebPreloadApi(): Partial<PreloadApi> {
+       isAvailable: () => callRuntimeResult<boolean>('host.gitBash.isAvailable').catch(() => false)
+     },
+     agentStatus: {
+-      onSet: () => noopUnsubscribe,
+-      onClear: () => noopUnsubscribe,
+-      getSnapshot: () => Promise.resolve([]),
++      ...createWebAgentStatusApi(),
+       inferInterrupt: () => Promise.resolve(false),
+       inferQuestionAnswered: () => Promise.resolve(false),
+       onMigrationUnsupported: () => noopUnsubscribe,
+@@ -1265,6 +1267,113 @@ function createWebKeybindingsApi(): WebKeybindingsApi {
+   }
+ }
+ 
++// Why: desktop feeds the renderer's agent-status store from `agentStatus:*` IPC, which needs a
++// BrowserWindow that `orca serve` never opens — so the store stayed empty and native chat could
++// not resolve providerSession. Route the same members at the runtime's agentStatus.* methods to
++// feed the identical setAgentStatus path. The server republishes a whole snapshot per hook change
++// (its change signal carries no payload), so set/clear are derived here by diffing and the desktop
++// callback contract reaches the renderer unchanged.
++function createWebAgentStatusApi(): Pick<
++  PreloadApi['agentStatus'],
++  'onSet' | 'onClear' | 'getSnapshot'
++> {
++  const setListeners = new Set<(payload: AgentStatusIpcPayload) => void>()
++  const clearListeners = new Set<(payload: AgentStatusClearIpcPayload) => void>()
++  let lastByPaneKey = new Map<string, string>()
++  let handle: { unsubscribe: () => void } | null = null
++  let cancelled = false
++
++  const applySnapshot = (entries: AgentStatusIpcPayload[]): void => {
++    const next = new Map<string, string>()
++    for (const entry of entries) {
++      const serialized = JSON.stringify(entry)
++      next.set(entry.paneKey, serialized)
++      if (lastByPaneKey.get(entry.paneKey) === serialized) {
++        continue
++      }
++      for (const listener of setListeners) {
++        listener(entry)
++      }
++    }
++    for (const paneKey of lastByPaneKey.keys()) {
++      if (next.has(paneKey)) {
++        continue
++      }
++      for (const listener of clearListeners) {
++        listener({ paneKey })
++      }
++    }
++    lastByPaneKey = next
++  }
++
++  const ensureSubscribed = (): void => {
++    if (handle || cancelled) {
++      return
++    }
++    const environment = requireActiveEnvironmentOrNull()
++    if (!environment) {
++      return
++    }
++    cancelled = false
++    void getClientForEnvironment(environment)
++      .subscribe(
++        'agentStatus.subscribe',
++        {},
++        {
++          onResponse: (response) => {
++            if (!response.ok) {
++              return
++            }
++            const result = response.result as { type?: string; entries?: AgentStatusIpcPayload[] }
++            if (result?.type === 'snapshot' && Array.isArray(result.entries)) {
++              applySnapshot(result.entries)
++            }
++          }
++        }
++      )
++      .then((h) => {
++        handle = h
++      })
++      .catch((err: unknown) => {
++        console.warn('[agent-status] subscribe failed:', err)
++      })
++  }
++
++  const releaseWhenIdle = (): void => {
++    if (setListeners.size > 0 || clearListeners.size > 0) {
++      return
++    }
++    handle?.unsubscribe()
++    handle = null
++    lastByPaneKey = new Map()
++  }
++
++  return {
++    getSnapshot: async () => {
++      const result = await callRuntimeResult<{ entries?: AgentStatusIpcPayload[] }>(
++        'agentStatus.getSnapshot'
++      ).catch(() => ({ entries: [] }))
++      return Array.isArray(result?.entries) ? result.entries : []
++    },
++    onSet: (callback) => {
++      setListeners.add(callback)
++      ensureSubscribed()
++      return () => {
++        setListeners.delete(callback)
++        releaseWhenIdle()
++      }
++    },
++    onClear: (callback) => {
++      clearListeners.add(callback)
++      ensureSubscribed()
++      return () => {
++        clearListeners.delete(callback)
++        releaseWhenIdle()
++      }
++    }
++  }
++}
++
+ // Why: web has no IPC for native-chat transcripts, so route readSession/subscribe through runtime RPC (as mobile does).
+ function createNativeChatApi(): NativeChatApi {
+   return {

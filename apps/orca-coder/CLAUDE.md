@@ -177,6 +177,19 @@ re-mint every boot. Phones therefore survive restarts. Tokens are never echoed; 
 `$${…}` and `%%{http_code}` escaping.
 ## 5. Debugging gotchas (each cost real time — don't relearn them)
 
+- **Never redefine an absence upstream already encodes.** Upstream stores "no active server" as an
+  **absent** settings key; a patch that defaulted that same absence to the paired environment made an
+  explicit `null` unrepresentable and kept three upstream tests red from the day it landed. If a
+  value must mean something different for the web client, resolve it **at the consumer**, never by
+  redefining what the stored absence means. (The `0013` import-cycle entry below is the same shape:
+  the damage was invisible because the patch's own tests stayed green.)
+- **Moving a decision from a synchronous source to store state inherits a hydration window.**
+  `state.runtimeEnvironments` is filled fire-and-forget at boot (`fetchSettings` →
+  `void hydrateRuntimeEnvironmentStatuses()`), so until it lands the catalog is `[]` — and for the
+  web client "no environments" resolves ownership to **local**, the one answer a browser can never
+  act on. ~100 call sites reach that resolver. `hydrateRuntimeEnvironmentCatalog` (a localStorage
+  list) is therefore separate from the status probes (network) and is awaited in the browser only.
+  When a fix reads store state where it used to read storage, ask what that state is before boot.
 - **`TypeError: Cannot convert undefined or null to object` at module load** → import cycle entered
   from the wrong end. `orca-runtime.ts` sits in one with the RPC tree; the other `rpc/` files
   reference it with `import type` (erased, no runtime edge). `0013` added the only **value** import

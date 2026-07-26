@@ -31,7 +31,7 @@ none carries an upstream fix. See `apps/orca-coder/CLAUDE.md` §3.
 was mandated by the ship skill, and was declared untrustworthy in the same breath — so it rotted.
 
 `git -C <fork> log --oneline <base>..HEAD` lists our commits, but **there are more commits than
-patches**: a feature plus its follow-up fixes share one boundary (today 15 commits, 13 patches, the
+patches**: a feature plus its follow-up fixes share one boundary (today 13 commits, 11 patches, the
 first three all inside `0001`). So the Nth commit is NOT patch N, and counting mis-assigns every
 boundary. The mapping is resolved from diff content — a patch equals the diff between two
 consecutive boundaries — by `orca-coder-patch-audit`'s `patch-map`:
@@ -72,14 +72,14 @@ with `web-preload-api.ts` (`createWebPreloadApi()`) and upstream stubs much of i
 `{available:false}`, no-op/throw — precisely where no wire exists yet.
 
 Three failure shapes come out of that. **Decide which one you are in before writing code** — the
-fix differs per shape, and one patch often has to answer more than one (`0009` = 39 locality
-decisions plus a single RPC; only `0004`/`0005`/`0008`/`0013` are purely shape 1).
+fix differs per shape, and one patch often has to answer more than one (`0008` = 39 locality
+decisions plus a single RPC; only `0003`/`0004`/`0007`/`0010` are purely shape 1).
 
 | # | Shape | Tell | Fix |
 |---|---|---|---|
 | 1 | **No wire.** The capability only ever existed as Electron IPC (`mainWindow.webContents.send(…)` + `ipc/*.ts`), so the web preload was stubbed | Hardcoded return in `web-preload-api.ts`; no matching namespace in `ALL_RPC_METHODS` | Add the RPC (or route to an existing one), mirroring `ipc/*.ts` 1:1 |
 | 2 | **Wrong locality.** "No `runtimeEnvironmentId`" read as "therefore this machine", then a desktop-only affordance | see the next subsection | Fix at the resolver, not the call site |
-| 3 | **Renderer-graph-driven.** Wired and locality-correct, but the *trigger* reads `this.leaves` / the window graph — permanently empty under serve | Logic keyed on `getLeavesForPty`, `handleByLeafKey`, `getLiveLeafForHandle` | Add the PTY-record counterpart, gated on leaf-emptiness so desktop never double-fires (`0010`) |
+| 3 | **Renderer-graph-driven.** Wired and locality-correct, but the *trigger* reads `this.leaves` / the window graph — permanently empty under serve | Logic keyed on `getLeavesForPty`, `handleByLeafKey`, `getLiveLeafForHandle` | Add the PTY-record counterpart, gated on leaf-emptiness so desktop never double-fires (`0009`) |
 
 **Shape 3 is the least obvious, so know the mechanism:** `serve` publishes ONE empty graph
 (`HEADLESS_RUNTIME_WINDOW_ID`, `main/index.ts`), `web-preload-api.ts`'s `syncWindowGraph` is a
@@ -178,7 +178,7 @@ rpc/methods/index → your method → back to orca-runtime`. Every one of the si
 `rpc/` files that references it uses **`import type`**, which TypeScript erases, so no runtime
 edge exists and the cycle never runs.
 
-Patch `0013` added the series' only **value** import from it (`RUNTIME_USAGE_PROVIDERS`) and used
+Patch `0010` (usage analytics) added the series' only **value** import from it (`RUNTIME_USAGE_PROVIDERS`) and used
 it at module scope (`z.enum(...)`). When the cycle is entered through `orca-runtime.ts`, that line
 evaluates before the constant is initialised: `TypeError: Cannot convert undefined or null to
 object` at module load. Measured cost — **29 test files failed to collect and 411 tests never
@@ -234,7 +234,9 @@ cost is work, not correctness.
 
    `git diff <prev-boundary> HEAD` is correct **only for the newest patch** and silently wrong for
    every other one: it captures every later patch too, and the post-image blob it records is
-   HEAD's. Patches `0011`–`0013` shipped that way and were re-exported on 2026-07-26.
+   HEAD's. Patches `0011`–`0013` shipped that way and were re-exported on 2026-07-26. The series was then
+   renumbered 14 → 11 on 2026-07-27: the active-runtime pin, the local-fallback floor and the
+   floating-workspace owner collapsed into `0008`, and mobile pairing + share links into `0002`.
    Measured symptoms — none of which `git apply` alone reveals, and `--3way` does NOT reject them:
    the `index` lines named blobs absent at that boundary (3 wrong across the series, now 0),
    forward apply reported `offset -50 lines`, reverse apply drifted, and `0001..000N` no longer

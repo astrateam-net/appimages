@@ -93,6 +93,104 @@ index d3d2a29a5..2d7f131f9 100644
    })
    registerMobileHandlers(runtimeRpc, {
      getRelayStatus: () => desktopRelayStatus,
+diff --git a/src/main/runtime/rpc/static-web-client-handler.test.ts b/src/main/runtime/rpc/static-web-client-handler.test.ts
+new file mode 100644
+index 000000000..ac4a009f4
+--- /dev/null
++++ b/src/main/runtime/rpc/static-web-client-handler.test.ts
+@@ -0,0 +1,92 @@
++import type { IncomingMessage, ServerResponse } from 'node:http'
++import { describe, expect, it, vi } from 'vitest'
++import { createStaticWebClientHandler } from './static-web-client-handler'
++
++const PAIRING_URL = 'orca://pair?code=test-offer'
++
++function requestFrom(url: string, remoteAddress: string | undefined): IncomingMessage {
++  return { method: 'GET', url, headers: {}, socket: { remoteAddress } } as unknown as IncomingMessage
++}
++
++function responseSpy(): {
++  response: ServerResponse
++  headers: Map<string, string>
++  body: () => string | undefined
++  ended: () => boolean
++} {
++  const headers = new Map<string, string>()
++  let body: string | undefined
++  let ended = false
++  const response = {
++    statusCode: 0,
++    setHeader: (name: string, value: string) => {
++      headers.set(name.toLowerCase(), value)
++    },
++    end: (chunk?: string) => {
++      body = chunk
++      ended = true
++    }
++  } as unknown as ServerResponse
++  return { response, headers, body: () => body, ended: () => ended }
++}
++
++async function handle(
++  url: string,
++  remoteAddress: string | undefined,
++  provider: () => string | null
++): Promise<{ response: ServerResponse; headers: Map<string, string>; body: () => string | undefined }> {
++  const handler = createStaticWebClientHandler('/nonexistent-static-root', {
++    trustedSessionProvider: provider
++  })
++  const spy = responseSpy()
++  handler(requestFrom(url, remoteAddress), spy.response)
++  // Why: the listener dispatches into an async worker with `void`, so let it settle.
++  await vi.waitFor(() => expect(spy.ended()).toBe(true))
++  return spy
++}
++
++describe('GET /trusted-session', () => {
++  it('serves the offer to a loopback peer and forbids caching it', async () => {
++    // Why: the payload is a device credential plus E2EE material. A proxy or browser
++    // caching it would hand runtime access to whoever reads the cache next.
++    for (const remote of ['127.0.0.1', '::1', '::ffff:127.0.0.1']) {
++      const { response, headers, body } = await handle('/trusted-session', remote, () => PAIRING_URL)
++      expect(response.statusCode).toBe(200)
++      expect(headers.get('cache-control')).toBe('no-store')
++      expect(JSON.parse(body() ?? '{}')).toEqual({ pairingUrl: PAIRING_URL })
++    }
++  })
++
++  it('hides the endpoint from a non-loopback peer', async () => {
++    // Why: loopback IS the authorization — it is proof the request arrived through the
++    // front proxy, which already authenticated. 404 rather than 403 so an off-host
++    // scanner cannot even learn the endpoint exists.
++    for (const remote of ['10.1.125.4', '::ffff:10.1.125.4', undefined]) {
++      const { response, body } = await handle('/trusted-session', remote, () => PAIRING_URL)
++      expect(response.statusCode).toBe(404)
++      expect(body()).toBeUndefined()
++    }
++  })
++
++  it('answers 503 while no offer can be minted yet', async () => {
++    // Why: a healthcheck must not treat "still starting" as "reachable"; the tile's
++    // readiness probe uses /web-index.html for exactly this reason.
++    const { response } = await handle('/trusted-session', '127.0.0.1', () => null)
++    expect(response.statusCode).toBe(503)
++  })
++
++  it('matches the endpoint behind a reverse-proxy path prefix', async () => {
++    const { response } = await handle('/workspace/orca/trusted-session', '127.0.0.1', () => PAIRING_URL)
++    expect(response.statusCode).toBe(200)
++  })
++
++  it('stays absent when trusted-proxy mode is off', async () => {
++    // Why: opt-in. Without --trusted-proxy there is no provider, so the path falls
++    // through to the static allowlist and 404s like any unknown file.
++    const handler = createStaticWebClientHandler('/nonexistent-static-root')
++    const spy = responseSpy()
++    handler(requestFrom('/trusted-session', '127.0.0.1'), spy.response)
++    await vi.waitFor(() => expect(spy.ended()).toBe(true))
++    expect(spy.response.statusCode).toBe(404)
++  })
++})
 diff --git a/src/main/runtime/rpc/static-web-client-handler.ts b/src/main/runtime/rpc/static-web-client-handler.ts
 index 4bfbc1e62..5d027d5c1 100644
 --- a/src/main/runtime/rpc/static-web-client-handler.ts

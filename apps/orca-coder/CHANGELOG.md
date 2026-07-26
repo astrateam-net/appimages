@@ -17,9 +17,49 @@ throw-on-call. Most "works on desktop, dead in the tile" reports are one of thos
 
 ---
 
-## 0013 — bridge usage analytics to the web client
+## 0011 — bridge agent status to the web client
 
-`patches/0013-web-usage-analytics-bridge.patch`
+`patches/0011-web-agent-status-bridge.patch`
+
+**Symptom:** toggling an agent tab from terminal to chat in the tile showed "Start a chat with
+Claude" — the *empty* state, not an error — while the same agent's transcript renders on desktop
+and on a phone paired to a desktop server. The terminal view was unaffected, which is the tell:
+terminal streams a live PTY, chat opens a transcript file.
+
+**Cause:** native chat resolves what to open from `agentStatusEntry.providerSession` alone
+(`sessionId` + `transcriptPath`, `native-chat-pane-resolution.ts`). The web preload stubs the whole
+`agentStatus` namespace — `getSnapshot → []`, `onSet`/`onClear` → noop — so that entry never
+exists and the view correctly reports it has no conversation. Nothing was missing on the server:
+hooks fire under `orca serve`, the hook server caches `providerSession`, and the runtime already
+holds `getAgentStatusSnapshot` — the same dep `worktree.ps` reads (verified live: `orca worktree
+ps --json` returns 5 agents with full hook fields). Only the pipe to the browser was absent,
+because `agentStatus:set`/`getSnapshot` relay through `mainWindow`, which serve never opens.
+
+**Fix:** `agentStatus.getSnapshot`/`subscribe`/`unsubscribe`, mirroring those IPC handlers 1:1 so
+the browser feeds the renderer's existing `setAgentStatus` path rather than a parallel one. The RPC
+module is dependency-free: it reads the runtime, which grows the push half
+(`subscribeAgentStatusChanges`) as a sibling of the pull dep already wired in `index.ts` — keeping
+the `agentHookServer` value import out of the RPC tree entirely, which is how `0012` closed a cycle.
+The hook server's change signal carries no payload, so `subscribe` republishes the whole enriched
+snapshot and the web preload diffs it back into the desktop's `onSet`/`onClear` contract; a clear is
+an absent `paneKey`, leaving main's single-listener clear channel untouched. Rows carry prompts,
+tool input and transcript paths, so all three stay out of `MOBILE_RPC_METHOD_ALLOWLIST` —
+test-enforced both directions; phones already get agent status via the mobile session tabs snapshot.
+
+**Placement:** audit returned `NEW_PATCH_BUT_CHECK` with `ownership = 0` — no patch owns any
+discriminating symbol. Considered and rejected as extensions: **0012** (same *shape* — new RPC
+family mirroring desktop IPC 1:1 plus a routed preload stub — but usage-scanning symbols, disjoint
+from agent-status); **0010** (also hook-adjacent under headless, but its capability is orchestration
+*message delivery* into a PTY); **0011** (client-side environment identity, not agent
+state); **0004**/**0005** (same route-a-stub shape, unrelated symbols). The patches sharing
+`web-preload-api.ts` share the hub file only, which decides nothing. Cross-checked against
+`orca-pristine`: `subscribeStatusChanges`, `getStatusSnapshot` and `enrichAgentStatusIpcPayload` all
+exist upstream and are reused; `AGENT_STATUS_METHODS` is the only genuinely new symbol.
+**Acceptance:** `rpc/methods/agent-status.test.ts`, `mobile-rpc-allowlist.test.ts`
+
+## 0010 — bridge usage analytics to the web client
+
+`patches/0010-web-usage-analytics-bridge.patch`
 
 **Symptom:** Settings → Stats & Usage sat on "Not scanned yet" in the tile and the Enable
 Claude/Codex/OpenCode buttons did nothing at all — no error, no effect. The same build on a Mac
@@ -46,45 +86,9 @@ Rules that now prevent it: `apps/orca-coder/CLAUDE.md` §5 and `orca-coder-patch
 
 **Placement:** shares symbols with 0002, 0003, 0004, 0006, 0007, 0009, 0010 — coupling recorded by audit; kept separate because each is a distinct capability. Re-review on the next bump.
 **Acceptance:** `mobile-rpc-allowlist.test.ts`
-## 0012 — finish the web client's local-fallback floor
+## 0009 — deliver orchestration messages on a headless host
 
-`patches/0012-web-local-fallback-completion.patch`
-
-**Symptom:** with `0009` shipped, the Settings skill terminal still toasted "Local PTYs are
-unavailable in the web client", and New Markdown failed with "No runtime worktree owns
-`<floating>/.orca/templates`".
-
-**Cause:** `0009` put a floor under the IPC fallback in `pty-connection.ts`, but three paths never
-reach it — ephemeral setup terminals route through `getSingleFocusedRuntimeEnvironmentId`
-(which falls back to local), `getSettingsForWorktreeRuntimeOwner` serves callers that spawn PTYs
-directly, and the floating workspace is a real directory that path→worktree resolution never
-accepts.
-
-**Fix:** the same floor at those three sites, plus a synthetic worktree record for the floating
-directory — the one the runtime already answers the sentinel with.
-**Placement:** no existing patch owned these symbols when it was written.
-**Acceptance:** **none — cannot be dropped, shrunk or merged until it has one.**
-## 0011 — pin the web client's active runtime
-
-`patches/0011-web-active-runtime-pin.patch`
-
-**Symptom:** a freshly paired tile showed its server as **Connected** while the skill terminal, the
-floating terminal and floating markdown notes all failed as if no runtime existed.
-
-**Cause:** every web-client ownership decision reads `settings.activeRuntimeEnvironmentId`, and
-nothing sets it. Its only writer is the Active Server selector, folded away under *Advanced* in
-Remote Orca Servers. "Connected" is reachability; "active" is a stored preference — two different
-things, and only the second one drives ownership.
-
-**Fix:** default the field to the paired environment. The web client stores exactly one
-(`readStoredWebRuntimeEnvironment` is singular, `resolveEnvironment` refuses any other selector), so
-for a browser the runtime itself serves this is a fact, not a preference. It stays a default: an
-explicit choice — including an explicit null — still wins.
-**Placement:** no existing patch owned these symbols when it was written.
-**Acceptance:** **none — cannot be dropped, shrunk or merged until it has one.**
-## 0010 — deliver orchestration messages on a headless host
-
-`patches/0010-web-headless-orchestration-delivery.patch`
+`patches/0009-web-headless-orchestration-delivery.patch`
 
 **Symptom:** in the tile, orchestration messages were stored but never handed to a waiting
 agent, so coordination degraded to "go tell each agent to check its inbox".
@@ -99,6 +103,54 @@ resolve in the order `sendTerminal` already uses.
 Touch points: `main/runtime/orca-runtime.ts`, `main/runtime/orca-runtime.test.ts`.
 **Placement:** shares symbols with 0006, 0007, 0009, 0013 — coupling recorded by audit; kept separate because each is a distinct capability. Re-review on the next bump.
 **Acceptance:** `orca-runtime.test.ts`
+## 0008 — own the web client's execution without a local machine
+
+`patches/0008-web-execution-owner.patch`
+
+**Merged 2026-07-27** from the former `0009` (floating workspace on the connected runtime) and the
+former `0011` (local-fallback floor + active-runtime pin). One question, three fixes, previously
+three patches.
+
+**Symptom:** the tile behaved as if a laptop sat behind it. The floating terminal, the Settings
+skill terminal and floating markdown notes failed as if no runtime existed — `pty.spawn` rejecting
+with "Local PTYs are unavailable in the web client", "No runtime worktree owns
+`<floating>/.orca/templates`" — while the server showed **Connected** the whole time.
+
+**Cause:** ownership resolution reads "no `runtimeEnvironmentId`" as "therefore this machine",
+which is correct for a laptop driving a remote runtime and impossible in a browser the runtime
+itself serves. Three separate paths reached that conclusion, and a fourth never got an answer at
+all because nothing set `activeRuntimeEnvironmentId`.
+
+**Fix:** decided at the resolvers every surface already routes through
+(`getRuntimeEnvironmentIdForWorktree`), never at individual call sites — the floating workspace on
+the connected runtime; a floor under the three paths that never reach `pty-connection`'s fallback
+(ephemeral setup terminals, direct PTY spawners, and a synthetic worktree record for the floating
+directory); and, with no Active Server chosen, resolution to the single saved environment read from
+`state.runtimeEnvironments`, the same source `getSingleFocusedRuntimeEnvironmentId` reads.
+
+**Why one patch:** the three shared the resolver file end to end — `resolveFloatingWorkspace-
+RuntimeEnvironmentId`, `getFloatingWorkspaceRuntimeEnvironmentId`,
+`getWebClientLocalFallbackEnvironmentId`, `FloatingTerminalPanel` — and the later ones could not
+apply without the earlier (probed: `0011` on a tree without `0009` fails outright). Audit weight 17
+on non-hub symbols.
+
+**Superseded mechanism.** The pin originally defaulted `activeRuntimeEnvironmentId` inside
+`getStoredSettings()`. Upstream encodes "no active server" as an **absent key**, so pinning that
+absence made an explicit null unrepresentable — and left three upstream `web-preload-api.test.ts`
+tests red from the day it landed, unnoticed because that patch shipped without an acceptance test.
+Bisected, not inferred: pristine `v1.4.156` 78/78, `0001..0010` 78/78, `+pin` → 3 red.
+**Hydration window (found and closed the same day).** Moving the pin out of the settings value
+traded a synchronous localStorage read for `state.runtimeEnvironments`, which the store fills
+**fire-and-forget** at boot (`fetchSettings` → `void hydrateRuntimeEnvironmentStatuses()`). Until it
+lands the catalog is `[]`, so the new fallback resolved to null — local — on the very paths this
+patch exists to fix, and ~100 call sites reach that resolver. Proven, not assumed: a boot-ordering
+test was red for a web client and green for desktop before the fix. Closed by splitting
+`hydrateRuntimeEnvironmentCatalog` (a localStorage list) out of
+`hydrateRuntimeEnvironmentStatuses` (network probes) and awaiting only the catalog, and only in the
+browser — desktop startup still touches no round trip, and the probes stay best-effort everywhere.
+**Acceptance:** `floating-workspace-runtime-owner.test.ts`, `web-preload-api.test.ts`,
+`settings-web-runtime-catalog.test.ts`
+
 ## Base bump — `v1.4.155` → `v1.4.156`, patch 0000 dropped
 
 Upstream shipped the `DetachedHeadBadge` fix this series had been carrying: `v1.4.156` declares
@@ -115,86 +167,9 @@ One upstream test (`project-view-wrapper-source-context-boundary`) fails under f
 load. Verified pre-existing: it fails on **pristine `v1.4.156` with zero patches**, and pristine
 `v1.4.155` fails 14 tests on the same suite. Not ours, and the bump improves it.
 
-## 0009 — the floating workspace runs on the connected runtime
+## 0007 — open a worktree in a browser editor
 
-`patches/0009-web-floating-workspace-runtime-owner.patch`
-
-**Symptom:** in the tile, the floating workspace could not open a terminal (*"Local PTYs are
-unavailable in the web client"*), a note (New/Open Markdown Note did nothing at all, no error), or
-a browser (chrome rendered over a blank page). Launching Claude/Codex from the tab-create menu
-failed with *"No renderer window available"*. A just-created project's terminal failed until the
-browser was reloaded.
-
-**Cause:** one shape in five places — code that reads *"not a named runtime"* as *"therefore this
-machine"*, which is true for a desktop app and never true for a browser the runtime is serving.
-`getRuntimeEnvironmentIdForWorktree` returns `null` unconditionally for the floating sentinel
-(`getExecutionHostIdForWorktree` `'local'`), so the pane took `createIpcPtyTransport` →
-`window.api.pty.spawn`, a rejecting stub whose message *is* the toast. The browser passed
-`browserRuntimeEnvironmentId: null`, which maps to `LOCAL_EXECUTION_HOST_ID` — a pane with no
-`<webview>` to back it. `getFloatingMarkdownDirectory` stubs to `''`, and the panel reads a falsy
-directory as "nowhere to put a note" and returns silently. `editor-file-operation-owner` pinned
-the same sentinel to `'local'` for file reads/writes. And `createTerminal` gated its headless
-branch on `!requiresRendererFocus`, so a *focused* create fell through to `getAuthoritativeWindow()`
-and threw.
-
-**Fix:** ownership is one predicate (`floating-workspace-runtime-owner`) — local on desktop, the
-connected runtime in the web client, which `mergeSettings` already pins to the environment that
-served the page. Patch 0006 had already asserted this ("the tile's floating terminals run on the
-connected server") when it moved the floating cwd onto the host; this is the other half. Terminal,
-browser and the setup/default-tab automations all route through
-`getRuntimeEnvironmentIdForWorktree`, so fixing it there carried all three onto runtime paths that
-already existed. Also: focused creates now take the background branch (which already honors
-`presentation === 'focused'` via `notifier.revealTerminalSession`); `floatingWorkspace.markdownDirectory`
-joins 0006's family reusing `ensureDefaultFloatingWorkspacePath`, out of `MOBILE_RPC_METHOD_ALLOWLIST`
-like its siblings, test-enforced; `RemoteFileBrowser` gained an opt-in `selectableFileExtensions`
-mode so Open Markdown Note uses the same host-fs picker as *Add a project* (omit the prop and that
-flow is unchanged); and `suppressActiveRuntimeFallback` now follows the app's own
-`owner === null` idiom instead of a hardcoded `true`.
-
-**The runtime needed no changes.** `resolveTerminalWorkspaceLaunchScope` already answers the
-floating sentinel with the home dir, and `browser.tabCreate`'s `worktree` is optional — the new
-`toRuntimeBrowserWorktreeSelector` omits it for the sentinel, which is terminal-only on the runtime
-and would otherwise throw in `resolveWorktreeSelector`.
-
-**Silent failure worth noting:** `launchWorktreeBackgroundTerminals` returns early for
-runtime-owned worktrees so the server materializes setup scripts and default tabs. When ownership
-came out local it fell through to `pty.spawn` — default tabs swallowed by a `console.warn`, setup
-scripts thrown. Nobody had reported it.
-
-**Floors, not diagnoses:** the terminal and browser now address the connected runtime when
-ownership resolves local in a web client, rather than a rejecting stub / dead pane. Ownership
-failing for *ordinary* worktrees is a real open bug (blank browser, *"Couldn't verify which host
-owns this file"*, "No files in this workspace" — one missing answer, three surfaces). The editor
-cannot be floored; it fails closed by design. See `docs/web-client-local-fallbacks/README.md` §9.
-
-**Follow-up after live test (`selector_not_found`):** routing the floating workspace at the
-runtime exposed the next layer — the floating sentinel is *terminal-only* on the server. It
-resolves in `resolveTerminalWorkspaceLaunchScope` (why terminals worked immediately) but every
-other workspace API goes through `resolveWorktreeSelector`, which searches real worktrees and
-throws. Two fixes, both in this patch:
-
-- **Browser:** `BrowserPane` carries the selector on ~15 RPCs. `tabCreate` already omitted it, so
-  the tab appeared and then the screencast subscribe failed — that error rendered *inside* the
-  pane under "Remote browser". One derivation site now uses `toRuntimeBrowserWorktreeSelector`;
-  `worktree` is `OptionalString` on every one of those schemas.
-- **Markdown:** file RPCs address `worktree` + `relativePath`, so "unscoped" is meaningless — the
-  server needs a root. `resolveRuntimeFileTarget` now answers the floating sentinel with the
-  app-owned floating workspace directory, via a `floatingWorkspaceToWorktree` helper mirroring the
-  existing `folderWorkspaceToWorktree` precedent for presenting a plain directory as a worktree.
-  `folderWorkspaceToResolvedWorktree` was reduced to a call to the extracted `toResolvedWorktree`.
-
-Touch points: `lib/floating-workspace-runtime-owner.ts` (new), `lib/worktree-runtime-owner.ts`,
-`lib/editor-file-operation-owner.ts`, `lib/floating-workspace-tab-creation.ts`,
-`components/floating-terminal/FloatingTerminalPanel.tsx`, `components/sidebar/RemoteFileBrowser.tsx`,
-`components/terminal-pane/pty-connection.ts`, `store/slices/browser.ts`,
-`runtime/runtime-worktree-selector.ts`, `runtime/web-runtime-session.ts`, `web/web-preload-api.ts`,
-`lib/web-client-location.ts`, `main/runtime/orca-runtime.ts`,
-`main/runtime/rpc/methods/floating-workspace.ts`, `main/runtime/mobile-rpc-allowlist.test.ts`.
-**Placement:** shares symbols with 0002, 0003, 0004, 0006, 0007, 0010, 0013 — coupling recorded by audit; kept separate because each is a distinct capability. Re-review on the next bump.
-**Acceptance:** `mobile-rpc-allowlist.test.ts`, `floating-workspace-runtime-owner.test.ts`
-## 0008 — open a worktree in a browser editor
-
-`patches/0008-web-open-in-browser-editor-urls.patch`
+`patches/0007-web-open-in-browser-editor-urls.patch`
 
 **Symptom:** in the tile, every **Open in** entry is disabled ("Local only"). There is no way to
 open a worktree in an editor at all.
@@ -306,9 +281,9 @@ fix upstream landed on `main` after the release.
 **⚠️ Delete this patch as soon as a tag declares the prop.** It is the only entry in the series
 that fixes an upstream bug rather than adding a capability. Per-bump check in CLAUDE.md §3.
 
-## 0007 — runtime-seeded appearance + experimental settings
+## 0006 — runtime-seeded appearance + experimental settings
 
-`patches/0007-web-runtime-seeded-settings.patch`
+`patches/0006-web-runtime-seeded-settings.patch`
 
 **Symptom:** a freshly provisioned workspace could not declare how its Orca looks or which
 features are on. Every browser opening the tile started at stock defaults, and the same
@@ -349,9 +324,9 @@ normalizer for them, and inventing one here would be this same mistake in the ot
 Full evidence trail: [docs/settings-provisioning/](../../docs/settings-provisioning/README.md).
 **Placement:** shares symbols with 0006, 0009, 0010, 0013 — coupling recorded by audit; kept separate because each is a distinct capability. Re-review on the next bump.
 **Acceptance:** `runtime-seeded-settings.test.ts`
-## 0006 — web-client floating-workspace directory picker
+## 0005 — web-client floating-workspace directory picker
 
-`patches/0006-web-floating-workspace-dir-picker.patch`
+`patches/0005-web-floating-workspace-dir-picker.patch`
 
 **Symptom:** in the web tile, Settings → Floating Workspace → **Terminal Directory**'s
 folder button did nothing — no picker, no error — and no directory could be applied. (Same
@@ -392,9 +367,9 @@ Touch points: `main/runtime/rpc/methods/floating-workspace.ts` (+ `.test.ts`), `
 `main/runtime/mobile-rpc-allowlist.test.ts`.
 **Placement:** shares symbols with 0002, 0003, 0004, 0007, 0009, 0010, 0013 — coupling recorded by audit; kept separate because each is a distinct capability. Re-review on the next bump.
 **Acceptance:** `mobile-rpc-allowlist.test.ts`, `floating-workspace.test.ts`, `FloatingWorkspacePane.test.tsx`
-## 0005 — web-client agent-skill CLI registration
+## 0004 — web-client agent-skill CLI registration
 
-`patches/0005-web-cli-registration.patch`
+`patches/0004-web-cli-registration.patch`
 
 **Symptom:** every agent-skill setup card (Orchestration, Browser Use, Computer Use,
 Linear, Ephemeral VMs, Mobile Emulator, Settings → CLI) warned **"Orca CLI registration is
@@ -427,9 +402,9 @@ Touch points: `src/main/runtime/rpc/methods/cli.ts` (+test), `src/main/ipc/cli.t
 `src/renderer/src/web/web-preload-api.ts`.
 **Placement:** no existing patch owned these symbols when it was written.
 **Acceptance:** `mobile-rpc-allowlist.test.ts`, `cli.test.ts`
-## 0004 — web-client resource manager
+## 0003 — web-client resource manager
 
-`patches/0004-web-resource-manager.patch`
+`patches/0003-web-resource-manager.patch`
 
 Resource Manager in the web client showed all zeros — the web preload `memory.getSnapshot`
 was an empty-snapshot stub. Now routes to runtime `diagnostics.memory` (which phones
@@ -437,31 +412,34 @@ already poll), so the tile shows the **workspace's** processes + host RAM/CPU. O
 stub→RPC reroute; falls back to the empty snapshot only when no environment is connected.
 **Placement:** shares symbols with 0002, 0003, 0006, 0009, 0013 — coupling recorded by audit; kept separate because each is a distinct capability. Re-review on the next bump.
 **Acceptance:** **none — cannot be dropped, shrunk or merged until it has one.**
-## 0003 — web-client runtime share links
+**Acceptance (added 2026-07-27):** `web-preload-api.test.ts` — routes `memory.getSnapshot` at
+`diagnostics.memory` and degrades to an empty snapshot rather than throwing when the runtime cannot
+answer.
 
-`patches/0003-web-runtime-share-links.patch` · contract: CLAUDE.md §1
+## 0002 — mint and revoke pairing credentials from the web client
 
-Upstream's "Advertise this app as a server → New Link" surface (runtime-scope grants) is
-desktop-only, so a headless serve's grants were mintable by nobody. Adds
-`mobile.getRuntimePairingUrl` / `listRuntimeAccessGrants` / `revokeRuntimeAccess` (same
-`trustedMobilePairing` runtime-scope gate; never mobile-allowlisted — a phone minting a
-runtime grant would be scope escalation), and reframes Settings → Remote Orca Servers as
-"Share the connected server" in the web client.
-**Placement:** shares symbols with 0001, 0002, 0004, 0006, 0009, 0013 — coupling recorded by audit; kept separate because each is a distinct capability. Re-review on the next bump.
-**Acceptance:** `mobile-rpc-allowlist.test.ts`, `mobile-pairing.test.ts`
-## 0002 — web-client mobile pairing
+`patches/0002-web-pairing-credentials.patch`
 
-`patches/0002-web-mobile-pairing.patch` · contract: CLAUDE.md §1 · **went live 2026-07-24**
+**Merged 2026-07-27** from the former `0002` (mobile pairing) and `0003` (runtime share links).
 
-Stock Orca's "Pair this computer" screen is desktop-only — in the web client every
-`window.api.mobile.*` call was a stub, and the LAN-interface model is wrong behind Coder.
-Adds runtime-RPC minting (`mobile.createPairingOffer` / `listDevices` / `revokeDevice`,
-runtime-scope only, strict params), pins connection mode `local-only`, and advertises the
-Coder subdomain wss URL (`?coder_session_token=…`) as the pairing endpoint — Coder is
-authn, Orca is authz + E2EE. Phone survives workspace restarts via the durable token minted
-by the install script (CLAUDE.md §4).
-**Placement:** shares symbols with 0001, 0003, 0004, 0006, 0009, 0013 — coupling recorded by audit; kept separate because each is a distinct capability. Re-review on the next bump.
-**Acceptance:** `mobile-rpc-allowlist.test.ts`, `mobile-pairing.test.ts`
+**Symptom:** the tile could not pair anything. **Generate code** for a phone did nothing, and there
+was no way to hand another client access to this runtime at all.
+
+**Cause:** both surfaces are desktop-only IPC the web preload never had.
+
+**Fix:** two credential scopes over one mechanism — `mobile` offers for phones (RPC allowlist plus
+payload diet) and `runtime` grants for full clients. Both mint or revoke a credential, so both are
+authorized by the same `trustedMobilePairing` context, injected only for runtime-scope connections
+and absent → fail closed. Advertised address stays server policy (`--pairing-address`), never
+client-chosen; strict zod params error rather than strip it. Web copy is reframed for a browser
+with no server of its own.
+
+**Why one patch:** audit weight 30 — the highest in the series — on six non-hub symbols
+(`TrustedMobilePairingRpcContext`, `TrustedRuntimeGrantResult`, `buildTrustedMobilePairingContext`,
+`mobile-pairing.ts:handler`, `getRuntimePairingUrl`, `trustedContext`). Probed: the share-links half
+does not apply at all without the mobile half.
+**Acceptance:** `mobile-pairing.test.ts`, `mobile-rpc-allowlist.test.ts`
+
 ## 0001 — trusted-proxy web session
 
 `patches/0001-serve-trusted-proxy-web-session.patch` · contract: CLAUDE.md §1
@@ -478,3 +456,8 @@ Also folds in **web-session device naming**: trusted-session devices are named
 Mobile.
 **Placement:** shares symbols with 0002, 0003 — coupling recorded by audit; kept separate because each is a distinct capability. Re-review on the next bump.
 **Acceptance:** **none — cannot be dropped, shrunk or merged until it has one.**
+
+**Acceptance (added 2026-07-27):** `static-web-client-handler.test.ts` — `/trusted-session` serves
+the offer with `Cache-Control: no-store` to a loopback peer, 404s a non-loopback one (hiding the
+endpoint rather than refusing it), 503s before an offer can be minted, matches behind a reverse-proxy
+path prefix, and is absent entirely when trusted-proxy mode is off.

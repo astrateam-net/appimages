@@ -273,7 +273,7 @@ index 000000000..fd6705018
 +  })
 +]
 diff --git a/src/renderer/src/web/web-preload-api.ts b/src/renderer/src/web/web-preload-api.ts
-index 2b91eb09b..85d4226e4 100644
+index 5af5b18b5..82ef2728d 100644
 --- a/src/renderer/src/web/web-preload-api.ts
 +++ b/src/renderer/src/web/web-preload-api.ts
 @@ -818,6 +818,9 @@ function createWebPreloadApi(): Partial<PreloadApi> {
