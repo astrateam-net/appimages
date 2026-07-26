@@ -183,16 +183,24 @@ re-mint every boot. Phones therefore survive restarts. Tokens are never echoed; 
   value must mean something different for the web client, resolve it **at the consumer**, never by
   redefining what the stored absence means. (The `0013` import-cycle entry below is the same shape:
   the damage was invisible because the patch's own tests stayed green.)
-- **The web client's pane keys are a different namespace from the host's — translate, never
-  forward.** The renderer mirrors every host terminal under
-  `makePaneKey(toWebTerminalSurfaceTabId(parentTabId), leafId)`, so its panes read
-  `web-terminal-<hostTabId>:<leafId>` while anything host-stamped (`ORCA_PANE_KEY`, hook rows,
-  `orca terminal list`) reads `<hostTabId>:<leafId>`. A bridge that forwards host-keyed rows
-  verbatim is **silently** inert: `resolvePaneKey` finds no tab and `applyAgentStatus` returns
-  `'dropped'` with nothing logged, so the wire looks healthy and the feature stays dead. `0011`
-  shipped exactly that and did not move its symptom. Any new host→renderer identity goes through
-  upstream's surface-id helpers. Desktop cannot reproduce it — there the two keys are equal, so
-  "works on my Mac" says nothing here.
+- **Paired clients are fed by the session-tab surface, not by a private channel — fill the surface,
+  don't build a second pipe.** A desktop host hangs its store's `AgentStatusEntry` off each surface
+  (`buildMobileTerminalSurfaceTabs`), and every paired client — phone AND web — mirrors it under its
+  own pane key via `remapHostAgentStatus`. `orca serve` has no renderer store, so the headless
+  builder omitted the field and three symptoms followed from that one gap: native chat could not
+  resolve `providerSession` (empty "Start a chat with…" state), the model picker had no `model`, and
+  `buildMirroredAgentStatusPatch` **deleted** any mirrored row it did not see in the snapshot — so
+  the pane blanked on every terminal↔chat toggle. Fill the surface and upstream's own mirror does the
+  rest. Headless snapshots are built once and cached, so a hook change must force a rebuild;
+  bumping the cached version alone re-emits stale status.
+- **Pane keys differ between host and web, and upstream already translates.** Web panes are
+  `web-terminal-<hostTabId>:<leafId>`; anything host-stamped (`ORCA_PANE_KEY`, hook rows,
+  `orca terminal list`) is `<hostTabId>:<leafId>`. Forwarding host-keyed rows straight to the
+  renderer is **silently** inert — `resolvePaneKey` finds no tab, `applyAgentStatus` returns
+  `'dropped'`, nothing is logged, so the wire looks healthy while the feature stays dead. `0011`
+  shipped that first and its symptom did not move. Never restate the mapping: route through the
+  surface so `toMirroredPaneKey` owns it. Desktop cannot reproduce either failure — there the two
+  keys are equal — so "works on my Mac" says nothing here.
 - **Moving a decision from a synchronous source to store state inherits a hydration window.**
   `state.runtimeEnvironments` is filled fire-and-forget at boot (`fetchSettings` →
   `void hydrateRuntimeEnvironmentStatuses()`), so until it lands the catalog is `[]` — and for the

@@ -27,54 +27,57 @@ and on a phone paired to a desktop server. The terminal view was unaffected, whi
 terminal streams a live PTY, chat opens a transcript file.
 
 **Cause:** native chat resolves what to open from `agentStatusEntry.providerSession` alone
-(`sessionId` + `transcriptPath`, `native-chat-pane-resolution.ts`). The web preload stubs the whole
-`agentStatus` namespace — `getSnapshot → []`, `onSet`/`onClear` → noop — so that entry never
-exists and the view correctly reports it has no conversation. Nothing was missing on the server:
-hooks fire under `orca serve`, the hook server caches `providerSession`, and the runtime already
-holds `getAgentStatusSnapshot` — the same dep `worktree.ps` reads (verified live: `orca worktree
-ps --json` returns 5 agents with full hook fields). Only the pipe to the browser was absent,
-because `agentStatus:set`/`getSnapshot` relay through `mainWindow`, which serve never opens.
+(`sessionId` + `transcriptPath`, `native-chat-pane-resolution.ts`), and that entry never existed in
+the browser. Nothing was missing on the host: hooks fire under `orca serve` and the hook server
+caches `providerSession` (verified live — `~/.config/orca/agent-hooks/last-status.json` held the
+row for the exact pane, with the transcript path that did contain both turns). A desktop host feeds
+every paired client — phone AND web — by hanging its store's `AgentStatusEntry` off each session-tab
+surface (`buildMobileTerminalSurfaceTabs`), which the client mirrors under its own pane key via
+`remapHostAgentStatus`. `orca serve` has no renderer store, so
+`buildHeadlessMobileSessionTerminalTabs` omitted `agentStatus` entirely and the mirror returned
+`null` for every surface.
 
-**Fix:** `agentStatus.getSnapshot`/`subscribe`/`unsubscribe`, mirroring those IPC handlers 1:1 so
-the browser feeds the renderer's existing `setAgentStatus` path rather than a parallel one. The RPC
-module is dependency-free: it reads the runtime, which grows the push half
-(`subscribeAgentStatusChanges`) as a sibling of the pull dep already wired in `index.ts` — keeping
-the `agentHookServer` value import out of the RPC tree entirely, which is how `0012` closed a cycle.
-The hook server's change signal carries no payload, so `subscribe` republishes the whole enriched
-snapshot and the web preload diffs it back into the desktop's `onSet`/`onClear` contract; a clear is
-an absent `paneKey`, leaving main's single-listener clear channel untouched. Rows carry prompts,
-tool input and transcript paths, so all three stay out of `MOBILE_RPC_METHOD_ALLOWLIST` —
-test-enforced both directions; phones already get agent status via the mobile session tabs snapshot.
-
-**Placement:** audit returned `NEW_PATCH_BUT_CHECK` with `ownership = 0` — no patch owns any
-discriminating symbol. Considered and rejected as extensions: **0012** (same *shape* — new RPC
-family mirroring desktop IPC 1:1 plus a routed preload stub — but usage-scanning symbols, disjoint
-from agent-status); **0010** (also hook-adjacent under headless, but its capability is orchestration
-*message delivery* into a PTY); **0011** (client-side environment identity, not agent
-state); **0004**/**0005** (same route-a-stub shape, unrelated symbols). The patches sharing
-`web-preload-api.ts` share the hub file only, which decides nothing. Cross-checked against
-`orca-pristine`: `subscribeStatusChanges`, `getStatusSnapshot` and `enrichAgentStatusIpcPayload` all
-exist upstream and are reused; `AGENT_STATUS_METHODS` is the only genuinely new symbol.
-**Fixed 2026-07-27 (same patch, boundary amended):** the bridge shipped and the symptom did not
-move — the chat view still showed "Start a chat with Claude". The rows were never the problem:
-`agentStatus.getSnapshot()` in the tile returned all six hook rows with correct `providerSession`.
-They arrive stamped with the host's own pane key (`ORCA_PANE_KEY`, `<hostTabId>:<leafId>`), but the
-web client mirrors every host terminal under `toWebTerminalSurfaceTabId(parentTabId)` — so the
-renderer's pane is `web-terminal-<hostTabId>:<leafId>` and `resolvePaneKey` finds no tab.
-`applyAgentStatus` returns `'dropped'`, silently, and `providerSession` never reaches the store.
-Measured live: hook row `cb5db10b-…:07996bf7-…` vs `ORCA_PANE_KEY`, `orca terminal list` and the
-renderer store all agreeing on `24f43d36-…:a12b2698-…`; on a native Mac the two match exactly,
-which is why desktop was unaffected. The single store entry the tile did hold came from the web
+Three symptoms, one absent field: no `providerSession` → the empty chat state; no `model` → a bare
+`Model` picker where desktop shows `Opus 4.8`; and `buildMirroredAgentStatusPatch` **deletes** any
+mirrored pane key it does not see in a snapshot — so the pane blanked on every terminal↔chat toggle
+and only refilled when a fresh hook event arrived. The one row the tile did hold came from the web
 PTY's own OSC 9999 stream, carrying `state`/`agentType` but never a session id — hence a sidebar
-row reading `Done - Claude` beside a chat pane that had no conversation, and an empty model picker.
-The fix translates at the preload boundary (`web-agent-status-pane-key.ts`, a leaf so the
-translation is unit-testable and the value imports stay out of the hub file), reusing upstream's
-`toWebTerminalSurfaceTabId` + `makePaneKey` rather than restating the mapping. Not fixed on the
-session-tabs channel: `buildHeadlessMobileSessionTerminalTabs` omits `agentStatus` entirely under
-serve, and that payload is mobile-allowlisted — filling it would ship transcript paths to phones,
-which this patch deliberately avoids.
-**Acceptance:** `rpc/methods/agent-status.test.ts`, `mobile-rpc-allowlist.test.ts`,
-`web/web-agent-status-pane-key.test.ts`
+reading `Done - Claude` beside a chat pane with no conversation.
+
+**Fix:** fill the surface, the way the desktop already does. `buildHeadlessMobileSessionTerminalTabs`
+attaches `agentStatus` per leaf from the hook rows, keyed `makePaneKey(tab.id, leafId)` and behind
+the same `isClaudeManagementTitle` guard desktop uses, so the headless builder matches
+`buildMobileTerminalSurfaceTabs` field for field. Upstream's `remapHostAgentStatus` then owns the
+host→web pane-key translation and the prune stops firing. Headless snapshots are built once and
+cached, so the hook change signal forces a rebuild (`hydrateHeadlessMobileSessionTabsFromWorkspaceSession`,
+then notify) — bumping the cached `snapshotVersion` alone would re-emit stale status. The wire shape
+conversion lives in a `src/shared/` leaf (`agent-status-session-surface.ts`) so it is unit-testable
+and carries no runtime edge back into the RPC cycle.
+
+**Superseded first attempt (2026-07-27):** this patch originally added an `agentStatus.*` RPC family
+plus a preload namespace. It shipped and the symptom did not move. The rows were never the problem —
+`agentStatus.getSnapshot()` in the tile returned all six with correct `providerSession` — they simply
+arrive stamped with the host's pane key (`ORCA_PANE_KEY`, `<hostTabId>:<leafId>`) while the renderer's
+pane is `web-terminal-<hostTabId>:<leafId>`, so `resolvePaneKey` missed and `applyAgentStatus`
+returned `'dropped'` in silence. Measured live: hook row vs `ORCA_PANE_KEY`, `orca terminal list` and
+the renderer store; on a native Mac the two keys match exactly, which is why desktop was unaffected.
+A second attempt translated the key in the preload — that fixed the transcript but left the toggle
+wipe and the picker, because it restated a mapping upstream already performs and put a second writer
+on keys the mirror prunes. Both attempts are gone: the RPC family, the preload namespace and the
+translation leaf were all removed, shrinking the patch from 420 added lines to 162. The lasting
+lesson is in CLAUDE.md §5 — fill the surface, never build a second pipe.
+
+The earlier reasoning that this channel must not carry `providerSession` because
+`session.tabs.list`/`subscribe` are mobile-allowlisted was **wrong**: every desktop host already
+publishes the full entry there, which is exactly how a phone paired to a Mac shows chat at all. The
+runtime-scope-only rule belongs to the `agentStatus.*` RPC family, which no longer exists.
+
+**Placement:** audit returned `EXTEND_EXISTING` on `createWebAgentStatusApi` + `getAgentStatusIpcRows`
+— a fix to this patch's own logic, so its boundary was restacked rather than taking a new number
+(CLAUDE.md §0.4). `buildHeadlessMobileSessionTerminalTabs` came back as `not_in_series`, i.e.
+upstream's, so it is extended rather than reinvented.
+**Acceptance:** `shared/agent-status-session-surface.test.ts`; live tile — chat renders the
+transcript, the picker shows a model, and both survive a terminal↔chat toggle.
 
 ## 0010 — bridge usage analytics to the web client
 
