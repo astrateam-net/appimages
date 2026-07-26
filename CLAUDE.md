@@ -11,14 +11,22 @@ published as a GitHub Release asset.
   the artifact is the `.AppImage`. Don't add registry/push logic.
 - **The build depends only on pristine upstream + `patches/`, never on a fork.**
   Patches are authored/tested in the app's fork (the "polygon") and exported here
-  as plain diffs. `git apply` fails the build loudly on upstream drift.
+  as plain diffs.
+- **A `RUN` loop over `patches/` needs `set -e`** — otherwise `RUN` takes the LAST
+  iteration's status and a mid-series failure passes the build.
+- **`git apply` succeeding is not acceptance** — it re-anchors by context, so it also
+  passes a patch that is not its boundary diff, and says nothing about whether the
+  patch is still needed. Real gates: the app's own contract.
 
 ## Build
 
 ```bash
-mise install                                                   # host jq
+mise install                                                   # host jq + ruff
 docker buildx bake -f apps/orca-coder/docker-bake.hcl appimage   # -> ./dist/*.AppImage
+mise run lint [--fix]                                          # ruff; also lints uncommitted *.py
 ```
+
+`*.py` in this repo is agent tooling under `.claude/skills/`, never a build input.
 
 ## Version discipline (IMPORTANT — do not use training-data versions)
 
@@ -37,8 +45,8 @@ docker buildx bake -f apps/orca-coder/docker-bake.hcl appimage   # -> ./dist/*.A
 `VERSION` is tracked by a custom regex manager on `docker-bake.hcl`. Its
 `managerFilePatterns` MUST be `/.../`-wrapped — unwrapped it's a glob that
 silently matches nothing (validator still passes). Patch-over-upstream apps are
-**not** auto-merged: a VERSION bump can fail `git apply` and needs a human to
-refresh the patch.
+**not** auto-merged: a bump needs a human to re-justify every patch
+(keep / shrink / merge / drop), not merely to make `git apply` pass again.
 
 ## CI
 
@@ -48,5 +56,6 @@ fan out to the reusable `app-builder.yaml`. Port more composite actions from
 
 ## `.upstream/`
 
-Gitignored reference clones — study upstream source here to ground decisions;
-never a build input.
+Gitignored, never a build input. Reference clones, plus per-app git **worktrees**: the fork
+carrying the patch series and a pristine one at the build tag. Which tree is authoritative — and
+which to never read — is in that app's contract.
