@@ -1,5 +1,23 @@
 # Open In entries should be runtime-backed, not seeded
 
+> ### ⚠️ Patch numbers in this document predate the 2026-07-27 renumbering
+>
+> The series was consolidated **14 → 11** (now 12) in `f218528`: two merges collapsed three patches.
+> Every number below may name a different capability today. Authoritative map — old → current:
+>
+> | This doc says | Was | Today |
+> |---|---|---|
+> | floating-workspace owner, local-fallback floor, active-runtime pin | `0009` / `0011` / `0012`-ish | all **`0008`** (`web-execution-owner`) |
+> | mobile pairing, runtime share links | two patches | both **`0002`** (`web-pairing-credentials`) |
+> | directory picker | `0006` | **`0005`** |
+> | seeded settings | `0007` | **`0006`** |
+> | "Open in" browser-editor URLs | `0008` | **`0007`** |
+> | usage analytics | `0013` | **`0010`** |
+> | — | did not exist | **`0011`** agent-status bridge, **`0012`** headless agent cold restore |
+>
+> Resolve any number against `ls apps/orca-coder/patches/` before acting on it. The *reasoning* in
+> this document is still good; only the labels rotted.
+
 **Question this answers:** patch `0008` made browser-editor "Open in" entries work, and the Coder
 module seeds them correctly — so why does a developer who already used the workspace still not see
 them, and what is the actual fix?

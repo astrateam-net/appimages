@@ -149,6 +149,16 @@ restart.
 | A dead agent pane resumes against its provider session instead of spawning a bare shell | `0012` | Unit 5/5, **and live-verified**: after a workspace restart the pane resumed with full prior context and ran fresh commands; 4 live `claude` processes on the host |
 | Agent identity + `providerSession` + transcript reach the browser, survive restart **and** republish by any of the 11 snapshot producers | `0011` | Live: `session.tabs.listAll` → 3/18 panes carry `agentStatus` with transcript paths, 0 hooks fired in 3h; chat renders both transcripts. Session made live by `0012`. |
 
+## 5.1 Known label rot — fix on next touch
+
+Three comments in the fork still say "see 0013" for the import-cycle rule; that patch is **`0010`**
+since the 14→11 renumber (`orca-runtime.ts` lines ~190, ~269, ~783). They sit inside shipped `0011`
+and `0012`, so correcting them forces a re-export plus a full re-verify of both — not worth a
+dedicated pass. Fix them the next time either patch is touched for a real reason. Prefer naming the
+*rule* over the number in new comments, so a renumber cannot invalidate them again.
+
+`docs/` carries the same rot in six files, each now stamped with the old→current map at the top.
+
 ## 6. Method
 
 1. Name the capability; find how **desktop** does it end to end (store slice → IPC → main).

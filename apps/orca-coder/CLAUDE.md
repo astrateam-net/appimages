@@ -187,7 +187,7 @@ re-mint every boot. Phones therefore survive restarts. Tokens are never echoed; 
   **absent** settings key; a patch that defaulted that same absence to the paired environment made an
   explicit `null` unrepresentable and kept three upstream tests red from the day it landed. If a
   value must mean something different for the web client, resolve it **at the consumer**, never by
-  redefining what the stored absence means. (The `0013` import-cycle entry below is the same shape:
+  redefining what the stored absence means. (The `0010` import-cycle entry below is the same shape:
   the damage was invisible because the patch's own tests stayed green.)
 - **Paired clients are fed by the session-tab surface, not by a private channel — fill the surface,
   don't build a second pipe.** A desktop host hangs its store's `AgentStatusEntry` off each surface
@@ -232,7 +232,7 @@ re-mint every boot. Phones therefore survive restarts. Tokens are never echoed; 
   When a fix reads store state where it used to read storage, ask what that state is before boot.
 - **`TypeError: Cannot convert undefined or null to object` at module load** → import cycle entered
   from the wrong end. `orca-runtime.ts` sits in one with the RPC tree; the other `rpc/` files
-  reference it with `import type` (erased, no runtime edge). `0013` added the only **value** import
+  reference it with `import type` (erased, no runtime edge). `0010` (usage analytics; `0013` before the 14→11 renumber) added the only **value** import
   and used it at module scope — **29 test files and 411 tests** died; `orca serve` survived on
   import-order luck. **Value imports from a hub module go in a leaf under `src/shared/`, and nothing
   crossing a cycle is evaluated at module scope.** Its own tests stayed green: the 29 were upstream

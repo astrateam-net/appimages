@@ -1,5 +1,23 @@
 # The web client should hold several runtime environments, not one
 
+> ### ⚠️ Patch numbers in this document predate the 2026-07-27 renumbering
+>
+> The series was consolidated **14 → 11** (now 12) in `f218528`: two merges collapsed three patches.
+> Every number below may name a different capability today. Authoritative map — old → current:
+>
+> | This doc says | Was | Today |
+> |---|---|---|
+> | floating-workspace owner, local-fallback floor, active-runtime pin | `0009` / `0011` / `0012`-ish | all **`0008`** (`web-execution-owner`) |
+> | mobile pairing, runtime share links | two patches | both **`0002`** (`web-pairing-credentials`) |
+> | directory picker | `0006` | **`0005`** |
+> | seeded settings | `0007` | **`0006`** |
+> | "Open in" browser-editor URLs | `0008` | **`0007`** |
+> | usage analytics | `0013` | **`0010`** |
+> | — | did not exist | **`0011`** agent-status bridge, **`0012`** headless agent cold restore |
+>
+> Resolve any number against `ls apps/orca-coder/patches/` before acting on it. The *reasoning* in
+> this document is still good; only the labels rotted.
+
 **Question this answers:** the desktop app can keep many Orca servers side by side and switch
 between them, but adding a second server in the Coder tile makes the first one vanish. Is that a
 design limit of Orca, a bug, or something we can fix in our series — and what would it buy us?
