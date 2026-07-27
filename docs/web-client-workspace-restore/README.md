@@ -1,12 +1,14 @@
 # NEXT UP — nothing on a headless host records which worktrees were open
 
-> **Status: parked 2026-07-27, not diagnosed.** Raised while fixing the agent-status freeze
+> **Status: next up, partially diagnosed (2026-07-27).** Raised while fixing the agent-status freeze
 > ([`web-client-session-persistence`](../web-client-session-persistence/)) and deliberately kept out
-> of that patch — it is a separate capability and would have bundled two into `0011`.
+> of `0011`/`0012` — it is a separate capability. Owner asked for this next: *"I need next session to
+> work — bring worktree auto-open."*
 >
-> Everything below §2 is **measurement**. §3 is a lead, not a conclusion. Per CLAUDE.md §0
-> invariant 1, placement is decided from a symbol list produced by diagnosis, so **no patch number
-> is claimed here** — run `orca-coder-patch-audit` step 0 when the diagnosis is real.
+> §2 is **measurement**, and is solid. §3's original lead is **superseded** — read the block that
+> says so before acting on it. Per CLAUDE.md §0 invariant 1, placement comes from a symbol list
+> produced by diagnosis, so **no patch number is claimed here** — run `orca-coder-patch-audit` step 0
+> once the diagnosis names the symbols.
 
 ## 1. Symptom
 
