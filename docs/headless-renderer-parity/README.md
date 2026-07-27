@@ -121,8 +121,8 @@ legitimately inert. The ones that cost real capability so far:
 
 | Capability | Patch | Verified |
 |---|---|---|
-| A dead agent pane resumes against its provider session instead of spawning a bare shell | `0012` | Unit 5/5 on the decision logic. **Live: unproven** — needs a restart plus typing in the composer |
-| Agent identity + `providerSession` + transcript reach the browser, survive restart **and** republish by any of the 11 snapshot producers | `0011` | Live: `session.tabs.listAll` → 3/18 panes carry `agentStatus` with transcript paths, 0 hooks fired in 3h; chat renders both transcripts. **Does not make the session live — see §3.** |
+| A dead agent pane resumes against its provider session instead of spawning a bare shell | `0012` | Unit 5/5, **and live-verified**: after a workspace restart the pane resumed with full prior context and ran fresh commands; 4 live `claude` processes on the host |
+| Agent identity + `providerSession` + transcript reach the browser, survive restart **and** republish by any of the 11 snapshot producers | `0011` | Live: `session.tabs.listAll` → 3/18 panes carry `agentStatus` with transcript paths, 0 hooks fired in 3h; chat renders both transcripts. Session made live by `0012`. |
 
 ## 6. Method
 

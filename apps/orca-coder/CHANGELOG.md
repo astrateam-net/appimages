@@ -61,8 +61,11 @@ capabilities that share a data source, not one split in two (CLAUDE.md §0.2). A
 `0009` (headless orchestration delivery) and `0008` (execution owner): neither touches agent launch.
 **Acceptance:** `main/runtime/headless-agent-cold-restore.test.ts` — resolves claude + session id
 from a hook row; declines no row, a non-resumable agent, an absent provider session, and a legacy
-non-UUID leaf. **Not yet proven live:** that the resumed process attaches and answers in the
-composer — that is the owner's restart test.
+non-UUID leaf. **Live-verified 2026-07-27** on the build carrying `resolveHeadlessAgentColdRestore`
+(extracted 02:55): after a workspace restart the owner opened an agent pane and continued the
+conversation — the resumed agent answered with full prior context and ran fresh shell commands, and
+the host showed 4 live `claude` processes. Chat and terminal now agree, because the pane is backed by
+a real resumed agent instead of a shell.
 
 ---
 
