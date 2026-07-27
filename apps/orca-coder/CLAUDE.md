@@ -4,6 +4,12 @@ Upstream [Orca](https://github.com/stablyai/orca) (Electron, MIT) patched so `or
 --trusted-proxy` runs behind a Coder subdomain tile **like `code-server`**: click the workspace
 tile → the full Orca web UI loads, no pairing token in the URL, no per-workspace config.
 
+**Goal: Orca as a self-hostable web app.** YOLO-mode agents must not run on a laptop, so the server
+must be reachable and the browser a first-class client — not a degraded desktop. Each patch closes
+one desktop→headless capability gap; the series format exists only to keep version bumps cheap.
+Reuse upstream's own blocks — new code, new dependencies, even a real backing service are fine when
+nothing exists to reuse; **workarounds are not.** Bar: a patch an upstream maintainer would accept.
+
 Below is the **orca-coder-specific** contract — the invariants any patch must respect. (Generic
 AppImage-factory mechanics — build sandbox, fork = polygon, `git apply`, Renovate, CI — are in
 the repo-root CLAUDE.md. Per-patch history: [CHANGELOG.md](CHANGELOG.md).) Change behavior →
@@ -193,30 +199,22 @@ re-mint every boot. Phones therefore survive restarts. Tokens are never echoed; 
   the pane blanked on every terminal↔chat toggle. Fill the surface and upstream's own mirror does the
   rest. Headless snapshots are built once and cached, so a hook change must force a rebuild;
   bumping the cached version alone re-emits stale status.
-- **A time-varying field belongs at the PUBLISH boundary, never stored in a headless snapshot.**
-  `mobileSessionTabsByWorktree` has **11 producers** writing `headless:` epochs, and
-  `mergeMobileSessionSnapshotTabs` dedupes by tab identity keeping the **cached** tab — correct for
-  upstream, which stores only stable topology there. Fill a derived field in one producer and the
-  next one silently drops it; `force: true` (sole trigger: a hook **change**) is the only wholesale
-  replace, and it cannot fire on a host whose agents all exited before the restart. Symptom shape:
-  invisible while an agent is live, permanent afterwards — **"worked before the restart" means check
-  the cache, not the wire.** Desktop's single source is the renderer store hung off every surface;
-  headless has no store, so its equivalent is `toMobileSessionTabsResult`, the one projection every
-  client-visible result passes through. Resolve there and no producer can lose it. Two fixes were
-  spent learning this — the rule is CLAUDE.md §0's *enumerate every producer*, applied to writers of
-  a cache, not just callers of a function.
-- **Upstream's retained-status fallback cannot serve a restarted host.**
-  `getFreshRetainedAgentStatusForMobileTab` reads `latestAgentStatusByPaneKey`, which is written
-  **only** by live ingest — never by the hook server's disk hydration — and it discards anything
-  older than `AGENT_STATUS_STALE_AFTER_MS` (30 min). After a restart it is empty for every pane, so
-  it looks like a working fallback and is structurally incapable of being one.
-- **The browser holds no session, by upstream design.** `sanitizeWebRuntimeWorkspaceSession` keeps
-  only `activeRepoId`, `activeWorktreeId`, `browserUrlHistory`, `lastVisitedAtByWorktreeId` — the
-  web client is deliberately stateless and is fed from the host over `session.tabs`. An empty
-  `localStorage` session is therefore never the bug; look at what the host builds. Corollary for
-  triage: the host's disk (`orca-data.json`, `agent-hooks/last-status.json`, the agent transcripts)
-  is the source of truth, and `orca-ide worktree ps --json` on the host tells you in one call
-  whether the runtime still has the data the tile is missing.
+- **A derived field goes at the PUBLISH boundary, never stored in a headless snapshot.**
+  `mobileSessionTabsByWorktree` has **11 producers**, and `mergeMobileSessionSnapshotTabs` keeps the
+  **cached** tab — so a field filled in one producer is dropped by the next. Desktop's single source
+  is the renderer store hung off every surface; headless's equivalent is `toMobileSessionTabsResult`,
+  the one projection every client-visible result passes through. Two fixes were spent learning this:
+  §0's *enumerate every producer* applies to cache writers, not just function callers.
+  **"Worked before the restart" ⇒ suspect the cache, not the wire.**
+- **`getFreshRetainedAgentStatusForMobileTab` cannot serve a restarted host** — it reads
+  `latestAgentStatusByPaneKey` (live ingest only, never disk hydration) and drops rows older than
+  `AGENT_STATUS_STALE_AFTER_MS` (30 min). Looks like the right fallback; is always empty post-restart.
+- **The browser holds no session, by upstream design** — `sanitizeWebRuntimeWorkspaceSession` keeps
+  only 4 fields; the web client is deliberately stateless and fed from the host over `session.tabs`.
+  An empty `localStorage` is never the bug. **Headless storage is not the gap either**: same
+  `orca-data.json` + `orchestration.db` as desktop. The gap is always the missing *renderer* — its
+  store, its `webContents.send` channels, its quit path. Triage from the host:
+  `orca-ide worktree ps --json` says in one call whether the runtime still holds what the tile lacks.
 - **Pane keys differ between host and web, and upstream already translates.** Web panes are
   `web-terminal-<hostTabId>:<leafId>`; anything host-stamped (`ORCA_PANE_KEY`, hook rows,
   `orca terminal list`) is `<hostTabId>:<leafId>`. Forwarding host-keyed rows straight to the
