@@ -126,9 +126,16 @@ the consumer rather than modified.
 (`listAllMobileSessionTabs`): cold start against a cached statusless snapshot, **another producer
 republishing the snapshot with a bare `headless:` epoch** (the case that shipped broken), and a pane
 with no hook row proving it does not invent an agent. The first two fail without the boundary
-resolution. Live tile — chat renders the transcript, the picker shows a model, both survive a
-terminal↔chat toggle, and **agent panes still offer chat after a workspace restart with no agent
-running**.
+resolution. Live tile 2026-07-27 — `session.tabs.listAll` returns 3/18 panes carrying
+`agentStatus` with `providerSession` + transcript paths, including two snapshots republished at bare
+`headless:` epochs v4, with **zero hooks fired in 3h**; chat renders both transcripts.
+
+**Scope limit — this patch does NOT make a restarted session live.** Native chat writes into the
+pane's PTY (`sendNativeChatMessage(settings, ptyId, text)`), and on a restarted headless host that
+PTY is a bare shell: typing in the composer produced `bash: command not found`. Desktop relaunches
+with resume flags from `pty-connection.ts`'s cold-restore path (renderer-only); no headless
+equivalent exists. Tracked as BLOCKING in `docs/headless-renderer-parity/` §3. Delivering identity
+and transcript is what this patch owns; resuming the session is a separate capability.
 
 ## 0010 — bridge usage analytics to the web client
 
