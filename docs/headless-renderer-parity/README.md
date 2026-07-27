@@ -114,8 +114,33 @@ legitimately inert. The ones that cost real capability so far:
 | Namespace | Stub | Status |
 |---|---|---|
 | `agentStatus.*` | `getSnapshot: () => []`, `onSet/onClear` no-op | worked around by filling the session-tab surface (`0011`) — a separate channel fights `buildMirroredAgentStatusPatch`, which prunes any pane key absent from the surface |
-| `session.readTerminalScrollback` | `() => null` | desktop does `sendSync('session:read-terminal-scrollback-sync')` → `store.readTerminalScrollbackSnapshot(ref)`. **No scrollback snapshots exist on the server's disk at all**, so this is S3 *and* S2 |
+| `session.readTerminalScrollback` | `() => null` | see §4.1 — S3 **and** S2 |
 | `management.*` (Manage Sessions) | `listSessions: () => ({sessions: []})`, no-op kill | tile cannot see or kill a wedged session — real loss of recovery |
+
+### 4.1 Terminal scrollback (S3 + S2)
+
+**What it is:** a terminal pane's history buffer — everything you can scroll *up* to see above the
+current prompt. Old commands, build output, log tails. Upstream restores it on desktop
+(`orca-wiki/guide/model/session-restore.md`: *"Terminal scrollback — the buffer in each terminal,
+including output produced while Orca was closed"*).
+
+**Broken on both ends:**
+
+- **Nothing writes it (S3).** There are **no scrollback snapshot files anywhere** under
+  `~/.config/orca` on the live workspace — only `orca-data.json` + backups + `active-view.json`. The
+  writer is the renderer's quit path; `orca serve` has no renderer. The main store *can* read them
+  (`readTerminalScrollbackSnapshot` → `readTerminalScrollbackSnapshotSync`), so the read side exists
+  on the host and the refs simply never get written.
+- **Nothing could read it anyway (S2).** `web-preload-api.ts:749` hard-codes
+  `readTerminalScrollback: () => null`; desktop does
+  `sendSync('session:read-terminal-scrollback-sync')` → `store.readTerminalScrollbackSnapshot(ref)`.
+
+**Priority: low, and lower since `0012`.** For *agent* panes the resume fills the pane with the live
+session, so the blank-pane symptom is gone — that is what the owner saw after `0012`. It still bites
+**plain shell** panes: a terminal where you ran a build or tailed a log comes back empty after a
+restart. You lose reading material, not working state. Rank it below
+[`web-client-workspace-restore`](../web-client-workspace-restore/), which costs clicks on every
+restart.
 
 ## 5. Fixed so far
 
