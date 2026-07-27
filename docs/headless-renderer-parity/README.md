@@ -49,7 +49,13 @@ Writer is `buildTerminalSessionData` / `buildWorkspaceSessionPayload`
 authoritative and falls back to `tabsByWorktree` — `{}` for a web client, because upstream's
 `sanitizeWebRuntimeWorkspaceSession` strips it by design.
 
-Parked detail: [`web-client-workspace-restore`](../web-client-workspace-restore/).
+⚠️ **The "nothing reopens your worktrees" row is fixed by `0013`, but NOT through this table.** The
+absence is real; the inference that filling it would fix the tile is wrong. A browser never reads
+the host's `workspaceSession` at all — its boot pointer is `ui.lastActiveRepoId` /
+`lastActiveWorktreeId` over `ui.get`. Writing `activeWorktreeIdsOnShutdown` host-side would be inert
+*and* would drive client-side eager PTY spawn. Before treating any other row here as "host must
+write it", check the client's read path.
+[`web-client-workspace-restore`](../web-client-workspace-restore/) records the full disproof.
 
 ## 2. Window-only channels (S2)
 
@@ -138,14 +144,14 @@ including output produced while Orca was closed"*).
 **Priority: low, and lower since `0012`.** For *agent* panes the resume fills the pane with the live
 session, so the blank-pane symptom is gone — that is what the owner saw after `0012`. It still bites
 **plain shell** panes: a terminal where you ran a build or tailed a log comes back empty after a
-restart. You lose reading material, not working state. Rank it below
-[`web-client-workspace-restore`](../web-client-workspace-restore/), which costs clicks on every
-restart.
+restart. You lose reading material, not working state. It is now the top remaining restart-cost
+item, since [`web-client-workspace-restore`](../web-client-workspace-restore/) shipped as `0013`.
 
 ## 5. Fixed so far
 
 | Capability | Patch | Verified |
 |---|---|---|
+| The tile reopens the workspace it was left in instead of the Landing screen | `0013` | Unit 2/2 (acceptance proven red without the fix); series 1198/1198; directory scope 21210/21210. **Live check pending a rebuild.** |
 | A dead agent pane resumes against its provider session instead of spawning a bare shell | `0012` | Unit 5/5, **and live-verified**: after a workspace restart the pane resumed with full prior context and ran fresh commands; 4 live `claude` processes on the host |
 | Agent identity + `providerSession` + transcript reach the browser, survive restart **and** republish by any of the 11 snapshot producers | `0011` | Live: `session.tabs.listAll` → 3/18 panes carry `agentStatus` with transcript paths, 0 hooks fired in 3h; chat renders both transcripts. Session made live by `0012`. |
 

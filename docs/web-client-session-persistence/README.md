@@ -112,6 +112,7 @@ Still open, unaffected by this fix:
 - **Manage Sessions is a stub** (`web-preload-api.ts` hard-codes `listSessions: () => ({sessions: []})`),
   so the tile cannot see or kill a wedged session. Real loss of recovery.
 - **The model picker does not self-populate.**
-- **Nothing re-opens the previously open worktrees** — the tile lands on "Select a workspace from
-  the sidebar to begin". Separate capability, parked with its measurements and open questions in
+- ~~**Nothing re-opens the previously open worktrees**~~ — fixed as `0013`: the tile now reopens the
+  workspace it was left in. The cause was not the missing `workspaceSession` fields this doc's
+  neighbours measured, but a missing producer for `ui.lastActive*`; see
   [`web-client-workspace-restore`](../web-client-workspace-restore/).

@@ -215,6 +215,13 @@ re-mint every boot. Phones therefore survive restarts. Tokens are never echoed; 
   `orca-data.json` + `orchestration.db` as desktop. The gap is always the missing *renderer* — its
   store, its `webContents.send` channels, its quit path. Triage from the host:
   `orca-ide worktree ps --json` says in one call whether the runtime still holds what the tile lacks.
+- **The browser never reads the host's `workspaceSession` — so writing a field there cannot reach
+  it.** `window.api.session.get` is `localStorage` only, and on a paired client it discards even
+  that, rebuilding the boot session from `ui.lastActiveRepoId`/`lastActiveWorktreeId`. So a
+  cross-restart client fact belongs in the **`ui` slice over `ui.get`/`ui.set`** (host-persisted,
+  read before the session at boot), never in `workspaceSession`. Corollary against the `0012`
+  reflex: "the host derives it from its own disk" is right only when the data reaches the client
+  over a surface the client actually reads. Check the read path before designing the write.
 - **Pane keys differ between host and web, and upstream already translates.** Web panes are
   `web-terminal-<hostTabId>:<leafId>`; anything host-stamped (`ORCA_PANE_KEY`, hook rows,
   `orca terminal list`) is `<hostTabId>:<leafId>`. Forwarding host-keyed rows straight to the

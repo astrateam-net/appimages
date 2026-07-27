@@ -17,6 +17,70 @@ throw-on-call. Most "works on desktop, dead in the tile" reports are one of thos
 
 ---
 
+## 0013 — restore the web client's last active workspace after a restart
+
+`patches/0013-web-workspace-restore.patch`
+
+**Symptom:** after a workspace restart the tile lands on Landing — "Select a workspace from the
+sidebar to begin", empty main pane — even though the sidebar lists every worktree. Desktop reopens
+the previous session on launch, and upstream documents that as a product feature
+(`orca-wiki/guide/model/session-restore.md`) with no headless carve-out.
+
+**Cause:** upstream's paired-client session read already restores this. `getStoredWorkspaceSession`
+takes the active-environment branch and returns
+`{ activeRepoId: ui.lastActiveRepoId, activeWorktreeId: ui.lastActiveWorktreeId, … }` — deliberately
+*not* the browser's own session, because "replaying browser-local terminal handles first creates
+stale remote PTYs". But **nothing anywhere writes those two fields.** Repo-wide they have exactly
+one reader (that branch), a `null` default in `shared/constants.ts` + `startup-ui-hydration.ts`, a
+clear-on-project-removal path, and a slot in the `UiUpdate` RPC schema. The producer was never
+implemented, on desktop or web. So the boot session is empty, `activeWorkspaceKey` resolves to null,
+and Landing renders.
+
+Ruled out as the seam — and this corrects the parked lead in
+`docs/web-client-workspace-restore/`, which expected a `0012`-shaped host-only fix:
+
+- `activeWorktreeIdsOnShutdown` **cannot** carry it. Its only writer is
+  `persistWindowlessPtyBindingsForDesktopAttach`, reachable solely from `attachWindow`, called
+  solely by `window/attach-main-window-services.ts` — a desktop window attach that never happens
+  under `orca serve`. Teaching the host to write it would also be inert: the browser never reads
+  the host's `workspaceSession` at all, only `localStorage` via `window.api.session`. And the field
+  drives `pendingReconnectWorktreeIds` → eager PTY spawn from the client, which is the exact stale-PTY
+  replay upstream's sanitizer exists to prevent.
+- The `tabsByWorktree` fallback is `{}` for a browser by design
+  (`sanitizeWebRuntimeWorkspaceSession` keeps 4 fields).
+- Per-worktree focused tab needs nothing: the host already persists it per client
+  (`PersistedMobileClientTabSelections`, keyed by `pairedDeviceId`).
+
+**Fix:** write the pointer upstream already consumes. `rememberWebActiveWorkspace` records
+`lastActiveRepoId`/`lastActiveWorktreeId` from the web session adapter (`set`/`patch`/`setSync` and
+`persistBeforeUnloadSync`) through the **existing** `ui.set` RPC, which persists into the host's own
+`ui` slice of `orca-data.json` — so a browser with empty storage, or a different browser entirely,
+still restores. Only the `local` partition is read (these are `global` ownership fields, cloned onto
+every host slice), the write is memoized so it fires on change rather than on every session write,
+and a failed RPC drops the memo so the next write retries. `getStoredWorkspaceSession` falls back to
+the browser's sanitized copy when the host pointer is absent, covering a client paired before the
+pointer existed. Tabs still arrive over `session.tabs` — the client stays stateless.
+
+**Placement:** audit returned `NEW_PATCH_BUT_CHECK` with **ownership 0 on every patch** — all six
+symbols came back `not_in_series` (upstream's). Considered `0008` (execution owner): nearest by
+area and it does touch this file, but it resolves *which host* runs work; this restores *which
+workspace* was open, and each acceptance passes without the other. Considered `0006`
+(runtime-seeded settings): it seeds settings from the runtime store, a different slice and a
+different boot step. Considered `0011`/`0012`: both are host-side session/agent work with no web
+adapter symbols. Sharing `web-preload-api.ts` decides nothing — 12 of 13 patches touch it
+(CLAUDE.md §0.2).
+**Acceptance:** `renderer/src/web/web-preload-api.test.ts` — "records the active workspace on the
+host so a fresh browser restores it" drives a paired `session.set`, asserts the `ui.set` pointer on
+the wire, then boots a *second* module instance against a storage holding only the pairing (no
+session, no ui), awaits `ui.get()` in App.tsx's real order, and asserts `session.get()` returns the
+worktree. Proven red without the source hunk (`ui.set` never called). A guard test asserts a
+non-local host partition is never taken as the active workspace. Full gates: `typecheck:tsc` all
+three projects clean; series test list 1198/1198; directory scope 21210 passed / 2127 files, 0
+failed; series byte-identical to its boundaries (2a) and applies clean on pristine (2b).
+**Not yet live-verified** — needs a rebuild and a workspace restart.
+
+---
+
 ## 0012 — cold-restore a dead agent pane on a headless host
 
 `patches/0012-web-headless-agent-cold-restore.patch`

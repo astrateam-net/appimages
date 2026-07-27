@@ -1,26 +1,26 @@
-# NEXT UP — nothing on a headless host records which worktrees were open
+# SHIPPED as `0013` — the tile restores the workspace it was left in
 
-> **Status: next up, partially diagnosed (2026-07-27).** Raised while fixing the agent-status freeze
-> ([`web-client-session-persistence`](../web-client-session-persistence/)) and deliberately kept out
-> of `0011`/`0012` — it is a separate capability. Owner asked for this next: *"I need next session to
-> work — bring worktree auto-open."*
+> **Status: fixed 2026-07-27, shipped as `0013-web-workspace-restore`.** Full rationale, placement
+> argument and acceptance criteria: [CHANGELOG `0013`](../../apps/orca-coder/CHANGELOG.md).
+> Not yet live-verified — needs a rebuild and a workspace restart.
 >
-> §2 is **measurement**, and is solid. §3's original lead is **superseded** — read the block that
-> says so before acting on it. Per CLAUDE.md §0 invariant 1, placement comes from a symbol list
-> produced by diagnosis, so **no patch number is claimed here** — run `orca-coder-patch-audit` step 0
-> once the diagnosis names the symbols.
+> §2's measurement was correct but led the wrong way, and §3's replacement lead was **also wrong**.
+> Both are kept below with what actually disproved them, because the mistake is reusable: it is the
+> `0012` reflex ("the host does it itself, from its own disk") applied without checking whether the
+> client ever reads the surface being written.
 
 ## 1. Symptom
 
 The Mac desktop reopens the previous session on launch — worktrees, tabs, splits, focused tab.
-Upstream documents this as a product feature (`orca-wiki/guide/model/session-restore.md`).
+Upstream documents this as a product feature (`orca-wiki/guide/model/session-restore.md`), with no
+headless carve-out.
 
-The Coder tile does not. After a workspace restart it lands on **"Select a workspace from the
-sidebar to begin"** with an empty main pane, even though the sidebar lists every worktree. You have
+The Coder tile did not. After a workspace restart it landed on **"Select a workspace from the
+sidebar to begin"** with an empty main pane, even though the sidebar listed every worktree. You had
 to click your way back to where you were.
 
-This is separate from the agent-status freeze fixed in `0011`. That one was "the pane opens but has
-no chat toggle"; this one is "nothing opens at all".
+Separate from the agent-status freeze fixed in `0011` ("the pane opens but has no chat toggle") and
+from `0012` ("the pane opens but is backed by a shell"). This one was "nothing opens at all".
 
 ## 2. What was measured (2026-07-27, `ceo/apricot-sheep-57` vs this Mac)
 
@@ -34,73 +34,64 @@ Comparing `workspaceSession` in `orca-data.json` on both hosts:
 | `lastVisitedAtByWorktreeId` | present | **absent** |
 | `tabsByWorktree` / `unifiedTabs` / `terminalLayoutsByTabId` | present | **present** (11 / 11 / 21) |
 
-So the host persists tab *topology* perfectly well — the runtime writes it as `session.tabs.*` RPCs
-mutate it — but nothing on that host ever writes the fields that say **which worktrees were open**.
+The numbers are real. The inference drawn from them — *"therefore the host must start writing the
+absent fields"* — was not, for the reason in §4.
 
-The restore consumer is `src/renderer/src/store/slices/terminals.ts:3163`:
+## 3. Two leads, both wrong — and what disproved them
 
-```js
-// activeWorktreeIdsOnShutdown is authoritative when present; persisted tab/layout PTY IDs
-// are only wake hints, not a full active-workspace list.
-const shutdownIds = session.activeWorktreeIdsOnShutdown ?? <derive from tabsByWorktree>
-```
+**Lead A (original): "no wire — let the browser read the host's session."** There is no
+`workspace.session.*` RPC, only `session.tabs.*`; upstream's host-partitioned session API
+(`workspace-session-host-persistence.ts`) stores partitions in the *client's own* main-process
+store, which for a browser is `localStorage`, which upstream sanitizes to nothing.
 
-and the writer is `buildTerminalSessionData` (`src/renderer/src/lib/workspace-session.ts:255`),
-reached only from `App.tsx` / `useIpcEvents` / `createSessionWriteSubscriber` — **all renderer**.
-`orca serve` has no renderer, so that path never runs.
+**Lead B (its replacement, after `0011`/`0012`): "the host does it itself, from its own disk, at the
+single point that replaces the renderer's mechanism"** — expecting no client change at all, because
+`0012` needed none.
 
-The fallback branch would work off `tabsByWorktree`, but for a web client that is `{}`: upstream's
-`sanitizeWebRuntimeWorkspaceSession` strips it by design, and the client boots from
-`window.api.session` → `localStorage`, not from the host. Tabs arrive afterwards by mirroring
-(`session.tabs.listAll` / `subscribeAll`), which is *after* hydration has already decided nothing is
-open.
+**What actually killed both:** the write target was never reachable.
 
-## 3. Lead — NOT established
+- `activeWorktreeIdsOnShutdown` has exactly one writer,
+  `persistWindowlessPtyBindingsForDesktopAttach`, reachable only from `attachWindow`, called only
+  from `window/attach-main-window-services.ts` — a desktop window attach that never happens under
+  `orca serve`. So lead B's premise ("the host could derive it") is true; upstream already has the
+  derivation.
+- But it would have been **inert anyway**: the browser never reads the host's `workspaceSession`.
+  `window.api.session.get` is `localStorage` only, and on a paired client
+  `getStoredWorkspaceSession` discards even that, rebuilding the boot session from
+  `ui.lastActiveRepoId` / `ui.lastActiveWorktreeId`.
+- And it would have been **harmful**: that field drives `pendingReconnectWorktreeIds` → eager PTY
+  spawn *from the client*, the exact stale-remote-PTY replay `sanitizeWebRuntimeWorkspaceSession`
+  exists to prevent.
 
-The shape looks like CLAUDE.md §1 "no wire": there is no `workspace.session.*` RPC, only
-`session.tabs.*`. Upstream *does* have a host-partitioned session API
-(`workspace-session-host-persistence.ts` — `fetchWorkspaceSessionFromHosts`, `persistWorkspaceSessionByHost`,
-with a `hostId` on `session:get/set/patch`), but on desktop those partitions are stored in the
-**client's own** main-process store (`src/main/ipc/session.ts` → `store.getWorkspaceSession(hostId)`),
-never pushed to the remote host. For a browser the "client's own store" is `localStorage`, which
-upstream sanitizes to nothing — the exact "wrong locality" shape, where local IS the server.
+**The generalisable lesson**, now in [CLAUDE.md §5](../../apps/orca-coder/CLAUDE.md): *check the
+read path before designing the write.* A host-side fix is only equivalent to `0012`'s when the data
+reaches the client over a surface the client actually reads.
 
-**Superseded by `0011`/`0012` — do NOT route this through the client.** The lead above assumed the
-fix was "let the browser read the host's session". Two patches later the proven shape is the
-opposite: **the host does it itself, from its own disk, at the single point that replaces the
-renderer's mechanism.** `0012` needed no client change and no `sleepingAgentSessionsByPaneKey` at
-all — the host's own hook rows were sufficient authority. Expect the same here: the host already
-persists `tabsByWorktree` / `terminalLayoutsByTabId` and already knows which tabs carry serve-owned
-PTY bindings (`hasServeOrSshOwnedBinding`), so it can derive "which worktrees were open" without any
-client-supplied record.
+## 4. What the gap actually was
 
-**Answered since parking:**
+Upstream's consumer already existed and was already correct. `getStoredWorkspaceSession` restores a
+paired client's workspace from `ui.lastActiveRepoId` / `ui.lastActiveWorktreeId`. Repo-wide, those
+two fields have **one reader**, a `null` default, a clear-on-project-removal path, and a slot in the
+`UiUpdate` RPC schema — and **no producer at all**, on desktop or web. Upstream designed the restore
+and never wired the write.
 
-- *Would restore actually bring panes back live, or is the PTY unreachable after a dead daemon?* →
-  Live. `0012` resumes an exited agent from `providerSession`, verified with 4 live `claude`
-  processes after a restart. Restore and cold restore compose: restore decides *which* panes open,
-  `0012` makes each one live.
-- *What about `sleepingAgentSessionsByPaneKey` on a headless host?* → Not needed. It is the desktop
-  renderer's registry; the host's `agent-hooks` cache carries the same facts and survives restarts.
+Everything else was already in place:
 
-**Still genuinely open:**
+- the wire — `ui.get` / `ui.set`, live in the web client (`createWebUiApi`) and host-persisted via
+  `runtime.updateUIState` → `orca-data.json`;
+- the boot order — `App.tsx` awaits `ui.get()` (step `ui-get`) *before* the session read, so the
+  host's pointer is in local UI state by the time `session.get()` runs;
+- the tabs — mirrored over `session.tabs.listAll`/`subscribeAll` once a worktree is active;
+- the focused tab within a worktree — already persisted per client on the host
+  (`PersistedMobileClientTabSelections`, keyed by `pairedDeviceId`).
 
-1. Does the *desktop* app restore a session when driving a **remote** runtime? If not, this is
-   upstream behaviour for remote hosts, not orca-coder-specific — that changes the fix.
-2. Two-writers hazard: the runtime already writes `workspaceSession` on `session.tabs.*` mutations.
-   Whatever writes the which-was-open fields must be the *only* writer of them. Upstream's desktop
-   split keeps exactly one writer per partition.
-3. Which field is authoritative for the web client. `activeWorktreeIdsOnShutdown` is what
-   `terminals.ts:3163` prefers, but its fallback derives from `tabsByWorktree` — which
-   `sanitizeWebRuntimeWorkspaceSession` empties for a browser. So either the host supplies the field,
-   or the client's hydration has to stop reading a sanitized session for this decision. Decide which
-   before writing.
+So `0013` is one missing producer, not a new mechanism: `rememberWebActiveWorkspace` records the
+pointer from the web session adapter through `ui.set`. Answers to the questions §3 left open, in
+order: (1) moot — desktop-vs-remote never mattered, the client's own read path did; (2) no
+two-writers hazard, because the pointer lives in the `ui` slice and not in `workspaceSession` at
+all; (3) neither candidate field — `ui.lastActive*` is authoritative.
 
-**Placement:** run `orca-coder-patch-audit` step 0 with the real symbols once diagnosis names them.
-`0012`'s audit returned `NEW_PATCH_BUT_CHECK` for the analogous case, so expect `0013` rather than an
-extension — but do not assume it.
-
-## 4. How to measure it cheaply
+## 5. How to measure it cheaply
 
 The technique that closed the `0011` investigation works here too, and needs no browser: the host's
 own `orca-ide` browser CLI can load the tile from loopback and `eval` in it as a real web client.
@@ -111,5 +102,15 @@ coder ssh <ws> -- 'cd /home/coder/.coder-modules/astrateam/orca && \
 # then: orca-ide eval --expression "<js>" --worktree <sel> --json
 ```
 
-Compare against this Mac's `~/Library/Application Support/orca/profiles/local-default/orca-data.json`
-— the desktop is the reference implementation, so port its path rather than designing a new one.
+For this capability the direct check is the `ui` slice on the host, not `workspaceSession`:
+
+```bash
+# resolve the file rather than assuming the profile dir — it is <userDataDir>/orca-data.json
+coder ssh <ws> -- 'find ~/.config -name orca-data.json 2>/dev/null \
+  -exec jq "{lastActiveRepoId: .ui.lastActiveRepoId, lastActiveWorktreeId: .ui.lastActiveWorktreeId}" {} +'
+```
+
+Both should be non-null after using the tile; then restart the workspace and confirm it opens on
+that worktree instead of Landing. Compare against this Mac's
+`~/Library/Application Support/orca/profiles/local-default/orca-data.json` — the desktop is the
+reference implementation, so port its path rather than designing a new one.
