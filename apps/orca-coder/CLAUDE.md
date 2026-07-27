@@ -193,16 +193,23 @@ re-mint every boot. Phones therefore survive restarts. Tokens are never echoed; 
   the pane blanked on every terminal↔chat toggle. Fill the surface and upstream's own mirror does the
   rest. Headless snapshots are built once and cached, so a hook change must force a rebuild;
   bumping the cached version alone re-emits stale status.
-- **A time-varying field on a headless snapshot must be resolved AFTER the merge, never stamped
-  during the build.** `mergeMobileSessionSnapshotTabs` dedupes by tab identity and keeps the
-  **cached** tab, silently dropping the freshly built one — correct for upstream, which pins only
-  stable topology there. Stamp `agentStatus` at build time and every rebuild discards it; the only
-  path that replaces wholesale is a `force: true` rebuild, whose sole trigger is a hook **change**,
-  which cannot fire on a host whose agents all exited before the last restart. The symptom is
-  therefore invisible while an agent is live and permanent afterwards — "worked before the restart"
-  is a signal to check the cache, not the wire. Resolving post-merge also repairs the cached tabs,
-  so the first `listAll` heals a frozen snapshot. Make it authoritative both ways or a dead agent
-  stays advertised.
+- **A time-varying field belongs at the PUBLISH boundary, never stored in a headless snapshot.**
+  `mobileSessionTabsByWorktree` has **11 producers** writing `headless:` epochs, and
+  `mergeMobileSessionSnapshotTabs` dedupes by tab identity keeping the **cached** tab — correct for
+  upstream, which stores only stable topology there. Fill a derived field in one producer and the
+  next one silently drops it; `force: true` (sole trigger: a hook **change**) is the only wholesale
+  replace, and it cannot fire on a host whose agents all exited before the restart. Symptom shape:
+  invisible while an agent is live, permanent afterwards — **"worked before the restart" means check
+  the cache, not the wire.** Desktop's single source is the renderer store hung off every surface;
+  headless has no store, so its equivalent is `toMobileSessionTabsResult`, the one projection every
+  client-visible result passes through. Resolve there and no producer can lose it. Two fixes were
+  spent learning this — the rule is CLAUDE.md §0's *enumerate every producer*, applied to writers of
+  a cache, not just callers of a function.
+- **Upstream's retained-status fallback cannot serve a restarted host.**
+  `getFreshRetainedAgentStatusForMobileTab` reads `latestAgentStatusByPaneKey`, which is written
+  **only** by live ingest — never by the hook server's disk hydration — and it discards anything
+  older than `AGENT_STATUS_STALE_AFTER_MS` (30 min). After a restart it is empty for every pane, so
+  it looks like a working fallback and is structurally incapable of being one.
 - **The browser holds no session, by upstream design.** `sanitizeWebRuntimeWorkspaceSession` keeps
   only `activeRepoId`, `activeWorktreeId`, `browserUrlHistory`, `lastVisitedAtByWorktreeId` — the
   web client is deliberately stateless and is fed from the host over `session.tabs`. An empty

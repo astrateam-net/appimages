@@ -93,13 +93,25 @@ the report: correct while an agent was live, permanently frozen after a restart.
 it: last hook write 23:47:53, serve restart 00:14:04, snapshots frozen at 00:15:03, still statusless
 at 01:05.
 
-**Fix:** resolve the field **after** the merge (`resolveSessionSurfaceAgentStatus`) instead of during
-the build, at the consumer rather than by changing what upstream's merge means (CLAUDE.md §5 — never
-redefine an absence upstream already encodes). Post-merge resolution also repairs the cached tabs the
-merge preserved, so the first `listAll` after a restart heals the snapshot without needing any hook
-to fire. Authoritative both ways: a pane with a hook row gains the entry, one without loses it — a
-retained entry would advertise an agent the host no longer reports. The hook-row index moves up one
-scope, built once per hydrate rather than once per worktree.
+**First fix, insufficient — one producer out of eleven:** resolving after the merge inside the
+hydrate did work on the snapshots that path builds (measured live: 3 panes gained status with zero
+hooks fired, sidebar agent rows and the dashboard badge came back). It was undone the moment
+anything else republished a snapshot — opening a worktree bumped `test` and `testing` to bare
+`headless:` epochs, versions 3 and 4, and both lost their status again. **11 call sites publish
+these tabs with a `headless:` epoch**, so filling any one of them is undone by whichever runs next.
+This is CLAUDE.md's *enumerate every producer* rule, missed.
+
+**Fix:** desktop has exactly one source for this — the renderer store, hung off every surface by
+`buildMobileTerminalSurfaceTabs`. Headless has no store, so the equivalent single point is the
+**publish boundary**, `toMobileSessionTabsResult`, which every client-visible result passes through
+(11 readers). Resolving the hook row there means no producer can drop or freeze the field, because
+none of them carry it any more — the field is a projection of derived, time-varying data, never
+stored state. Not routed through upstream's own fallback
+(`getFreshRetainedAgentStatusForMobileTab`): it reads `latestAgentStatusByPaneKey`, written only by
+live ingest and never by the hook server's disk hydration, and it rejects anything older than
+`AGENT_STATUS_STALE_AFTER_MS` (30 min) — both make it structurally empty after exactly the restart
+that matters. A hook row wins over a value already on the tab, so a desktop renderer publishing into
+the same runtime keeps its own store entry as the fallback.
 
 **Placement:** audit returned `EXTEND_EXISTING` on `createWebAgentStatusApi` + `getAgentStatusIpcRows`
 — a fix to this patch's own logic, so its boundary was restacked rather than taking a new number
@@ -111,8 +123,9 @@ The third fix re-ran the same audit with the merge symbols: `EXTEND_EXISTING →
 the consumer rather than modified.
 **Acceptance:** `shared/agent-status-session-surface.test.ts`, and
 `main/runtime/headless-agent-status-surface.test.ts` — drives the real client entry point
-(`listAllMobileSessionTabs`) against a cached statusless snapshot and asserts both directions
-(stamped when a hook row exists, cleared when it does not); both cases fail without the post-merge
+(`listAllMobileSessionTabs`): cold start against a cached statusless snapshot, **another producer
+republishing the snapshot with a bare `headless:` epoch** (the case that shipped broken), and a pane
+with no hook row proving it does not invent an agent. The first two fail without the boundary
 resolution. Live tile — chat renders the transcript, the picker shows a model, both survive a
 terminal↔chat toggle, and **agent panes still offer chat after a workspace restart with no agent
 running**.

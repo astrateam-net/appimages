@@ -14,10 +14,10 @@ index 7845a4ef9..37aa2d16b 100644
        codexRuntimeHome ? codexRuntimeHome.getHostCodexHomePathsForSessionDiscovery() : [],
 diff --git a/src/main/runtime/headless-agent-status-surface.test.ts b/src/main/runtime/headless-agent-status-surface.test.ts
 new file mode 100644
-index 000000000..f6f5cecce
+index 000000000..9adb36001
 --- /dev/null
 +++ b/src/main/runtime/headless-agent-status-surface.test.ts
-@@ -0,0 +1,194 @@
+@@ -0,0 +1,209 @@
 +/**
 + * Headless session-tab surfaces must carry CURRENT hook-reported agent status.
 + *
@@ -194,17 +194,32 @@ index 000000000..f6f5cecce
 +    })
 +  })
 +
-+  it('clears agent status from a cached pane the host no longer reports', async () => {
-+    // Why: resolution has to be authoritative both ways — a retained entry would keep advertising
-+    // an agent that is gone, which is the same lie in the opposite direction.
-+    const runtime = createRuntime([])
-+    const cached = cachedStatuslessSnapshot()
-+    ;(cached.tabs[0] as RuntimeMobileSessionTerminalTab).agentStatus = {
-+      paneKey: PANE_KEY,
++  it('survives another producer re-publishing the snapshot without status', async () => {
++    // Why: THE regression that shipped. 11 producers write these tabs with a bare `headless:` epoch,
++    // and mergeMobileSessionSnapshotTabs keeps the CACHED tab — so filling the field in one producer
++    // is undone by whichever runs next (live: opening a worktree bumped the snapshot and every pane
++    // lost its chat toggle again). Resolution must be at the publish boundary, not in a producer.
++    const runtime = createRuntime([hookRow()])
++    const internals = runtime as unknown as RuntimeInternals
++
++    expect(terminalSurfaces(await runtime.listAllMobileSessionTabs())[0]?.agentStatus).toBeTruthy()
++
++    const republished = cachedStatuslessSnapshot()
++    republished.publicationEpoch = 'headless:another-producer'
++    republished.snapshotVersion = 4
++    internals.mobileSessionTabsByWorktree.set(WT, republished)
++
++    const surfaces = terminalSurfaces(await runtime.listAllMobileSessionTabs())
++    expect(surfaces).toHaveLength(1)
++    expect(surfaces[0]?.agentStatus).toMatchObject({
 +      agentType: 'claude',
-+      state: 'working'
-+    } as never
-+    ;(runtime as unknown as RuntimeInternals).mobileSessionTabsByWorktree.set(WT, cached)
++      providerSession: { id: '582f66ac-ab96-4105-a762-8075fbf0f35d' }
++    })
++  })
++
++  it('emits no agent status for a pane the host reports no hook row for', async () => {
++    // Why: the resolution must not invent an agent on an ordinary shell pane.
++    const runtime = createRuntime([])
 +
 +    const surfaces = terminalSurfaces(await runtime.listAllMobileSessionTabs())
 +
@@ -213,22 +228,19 @@ index 000000000..f6f5cecce
 +  })
 +})
 diff --git a/src/main/runtime/orca-runtime.ts b/src/main/runtime/orca-runtime.ts
-index f6bdfcaa7..ba754d786 100644
+index f6bdfcaa7..45a454d44 100644
 --- a/src/main/runtime/orca-runtime.ts
 +++ b/src/main/runtime/orca-runtime.ts
-@@ -260,6 +260,11 @@ import {
+@@ -260,6 +260,8 @@ import {
  import { TASK_PROVIDERS } from '../../shared/task-providers'
  import { FIRST_PANE_ID } from '../../shared/pane-key'
  import { isTerminalLeafId, makePaneKey, parsePaneKey } from '../../shared/stable-pane-id'
 +// Why: leaf module (types only) — no runtime edge back into the RPC cycle. See 0013.
-+import {
-+  agentStatusEntriesByPaneKey,
-+  resolveSessionSurfaceAgentStatus
-+} from '../../shared/agent-status-session-surface'
++import { agentStatusEntriesByPaneKey } from '../../shared/agent-status-session-surface'
  import { parseAppSshPtyId } from '../../shared/ssh-pty-id'
  import { isValidHostTerminalTabId, isValidTerminalTabId } from '../../shared/terminal-tab-id'
  import {
-@@ -772,6 +777,8 @@ import {
+@@ -772,6 +774,8 @@ import {
  } from '../git/worktree'
  import type { AddWorktreeOptions, AddWorktreeResult } from '../git/worktree'
  import { isENOENT } from '../ipc/filesystem-auth'
@@ -237,7 +249,7 @@ index f6bdfcaa7..ba754d786 100644
  import {
    ensureDefaultFloatingWorkspacePath as ensureDefaultFloatingWorkspacePathOnHost,
    resolveFloatingTerminalCwd as resolveFloatingTerminalCwdOnHost,
-@@ -2955,6 +2962,9 @@ export class OrcaRuntimeService {
+@@ -2955,6 +2959,9 @@ export class OrcaRuntimeService {
    private readonly onTerminalSideEffects: ((batch: TerminalSideEffectBatch) => void) | null
    private terminalSideEffectConsumerAvailable = false
    private readonly getAgentStatusSnapshotFn: (() => AgentStatusIpcPayload[]) | null
@@ -247,7 +259,7 @@ index f6bdfcaa7..ba754d786 100644
    private readonly buildAgentHookPtyEnv: (() => Record<string, string>) | null
    private readonly getDesktopWindowStatusFn: () => RuntimeDesktopWindowStatus
    private readonly prepareAiVaultSessionResumeFn:
-@@ -2991,6 +3001,9 @@ export class OrcaRuntimeService {
+@@ -2991,6 +2998,9 @@ export class OrcaRuntimeService {
        // terminal output. worktree.ps reads this at query time so mobile shows the
        // same inline agent rows the desktop sidebar does — same source, 1:1.
        getAgentStatusSnapshot?: () => AgentStatusIpcPayload[]
@@ -257,7 +269,7 @@ index f6bdfcaa7..ba754d786 100644
        // Why: codex-home paths for the Agent Session History scan must be sourced
        // here, not via the window-only registerCoreHandlers path — that path never
        // runs under `orca serve`, so remote/SSH hosts would silently drop
-@@ -3026,6 +3039,15 @@ export class OrcaRuntimeService {
+@@ -3026,6 +3036,15 @@ export class OrcaRuntimeService {
        this.agentDetector = new AgentDetector(stats)
      }
      this.getAgentStatusSnapshotFn = deps?.getAgentStatusSnapshot ?? null
@@ -273,45 +285,68 @@ index f6bdfcaa7..ba754d786 100644
      // Why: configure the shared AiVault scan cache from a serve-mode-reachable
      // seam so the aiVault.listSessions RPC includes managed-Codex + WSL sessions
      // even on headless `orca serve` hosts where registerCoreHandlers never runs.
-@@ -4222,6 +4244,9 @@ export class OrcaRuntimeService {
-     // repo inventory on the hot poll path, and `null` when the store cannot
-     // report repos — an unavailable list must not read as "every repo is gone".
-     let liveRepoIds: Set<string> | null | undefined
-+    // Why: the desktop hangs its store entry off each surface (buildMobileTerminalSurfaceTabs);
-+    // headless has no store, so read the hook rows that back it — once, not per worktree.
-+    const agentStatusByPaneKey = agentStatusEntriesByPaneKey(this.getAgentStatusIpcRows())
-     for (const [entryWorktreeId, persistedTabs] of entries) {
-       const ownerRepoId = splitWorktreeIdForFilesystem(entryWorktreeId)?.repoId
-       if (ownerRepoId) {
-@@ -4271,10 +4296,16 @@ export class OrcaRuntimeService {
-         ...browserTabs.map((tab) => tab.id)
-       ]
-       const groupId = this.getHeadlessMobileSessionGroupId(entryWorktreeId)
--      const mergedTabs =
-+      // Why: the merge keeps the CACHED tab on an identity collision, so hook-derived status must be
-+      // resolved after it — see resolveSessionSurfaceAgentStatus. Applied before the unchanged-check
-+      // below so a status change publishes and an unchanged one stays a no-op.
-+      const mergedTabs = resolveSessionSurfaceAgentStatus(
-         options.onlyRuntimeOwnedTerminals === true && existing
-           ? this.mergeMobileSessionSnapshotTabs(existing.tabs, tabs)
--          : tabs
-+          : tabs,
-+        agentStatusByPaneKey,
-+        isClaudeManagementTitle
-+      )
-       const mergedActiveTab =
-         existing?.tabs.find((tab) => tab.id === existing.activeTabId) ??
-         activeTab ??
-@@ -5187,6 +5218,8 @@ export class OrcaRuntimeService {
+@@ -5187,6 +5206,9 @@ export class OrcaRuntimeService {
                parentTabId: tab.id,
                leafId,
                title,
-+              // Why: agentStatus is stamped post-merge (resolveSessionSurfaceAgentStatus), not here —
-+              // the merge keeps the cached tab and would drop a value set at build time.
++              // Why: agentStatus is resolved at the publish boundary (toMobileSessionTabsResult),
++              // never stored — 11 snapshot producers write these tabs and the merge keeps the
++              // CACHED one, so any value set here is dropped or frozen.
                ...(ptyId ? { ptyId } : {}),
                ...(tab.startupCwd ? { startupCwd: tab.startupCwd } : {}),
                ...(tab.launchAgent ? { launchAgent: tab.launchAgent } : {}),
-@@ -26594,6 +26627,14 @@ export class OrcaRuntimeService {
+@@ -26210,6 +26232,16 @@ export class OrcaRuntimeService {
+   ): RuntimeMobileSessionTabsResult {
+     const tabs: RuntimeMobileSessionClientTab[] = []
+     const liveBrowserTabsByPageId = this.getLiveBrowserTabsByPageId(snapshot.worktree)
++    // Why: a desktop host hangs its renderer store's AgentStatusEntry off every surface
++    // (buildMobileTerminalSurfaceTabs). `orca serve` has no store, and the hook rows that replace it
++    // cannot be written into the snapshot instead: 11 producers publish these tabs and
++    // mergeMobileSessionSnapshotTabs keeps the CACHED tab, so a stored value is dropped by whichever
++    // producer runs next and then frozen. This projection is the one boundary every client-visible
++    // result passes through, so resolving here is the headless equivalent of the desktop store and
++    // no producer can lose it. Not routed through getFreshRetainedAgentStatusForMobileTab: that
++    // reads latestAgentStatusByPaneKey (live ingest only, never disk-hydrated) and drops anything
++    // older than AGENT_STATUS_STALE_AFTER_MS, so it is empty for every pane after a restart.
++    const hookAgentStatusByPaneKey = agentStatusEntriesByPaneKey(this.getAgentStatusIpcRows())
+     // Why: a live PTY backs one surface; claim each once so two leaves resolving to it can't emit duplicate React keys and crash the client.
+     const claimedLivePtyIds = new Set<string>()
+     for (const tab of snapshot.tabs) {
+@@ -26258,9 +26290,12 @@ export class OrcaRuntimeService {
+         ? makePaneKey(tab.parentTabId, tab.leafId)
+         : `${tab.parentTabId}:${legacyPaneId ?? tab.leafId}`
+       const mobileStatusPty = livePty ?? pty
++      // Why: the hook row is the headless stand-in for the desktop store entry, so it takes
++      // precedence over whatever a producer happened to leave on the tab.
++      const surfaceAgentStatus = hookAgentStatusByPaneKey.get(paneKey) ?? tab.agentStatus ?? null
+       // Why: headless hooks live only in main's retained rows; reuse this lookup
+       // for both title ownership and status publication so the two cannot diverge.
+-      const retainedAgentStatus = tab.agentStatus
++      const retainedAgentStatus = surfaceAgentStatus
+         ? null
+         : this.getFreshRetainedAgentStatusForMobileTab(paneKey, liveLeafPty ?? mobileStatusPty, tab)
+       const leafTitle = leaf
+@@ -26280,7 +26315,7 @@ export class OrcaRuntimeService {
+       const ownerAgent =
+         resolvePaneAgentOwner({
+           launchAgent,
+-          hookAgent: tab.agentStatus?.agentType ?? retainedAgentStatus?.payload.agentType ?? null
++          hookAgent: surfaceAgentStatus?.agentType ?? retainedAgentStatus?.payload.agentType ?? null
+         }) ??
+         liveLeafPty?.foregroundAgent ??
+         pty?.foregroundAgent ??
+@@ -26291,8 +26326,8 @@ export class OrcaRuntimeService {
+       )
+       const liveTitleEvidence = leafTitle ?? ptyTitle
+       const liveTitleEvidenceClassification = classifyAgentTitle(liveTitleEvidence)
+-      const normalizedTabAgentStatus = tab.agentStatus
+-        ? normalizeCompatibleAgentStatusEntryForOwner(tab.agentStatus, ownerAgent)
++      const normalizedTabAgentStatus = surfaceAgentStatus
++        ? normalizeCompatibleAgentStatusEntryForOwner(surfaceAgentStatus, ownerAgent)
+         : null
+       // Why: keep rich hook status on a live prompt/tool (authoritative even under a non-agent title), else interactivePrompt is lost.
+       const hasLiveAgentSignal =
+@@ -26594,6 +26629,14 @@ export class OrcaRuntimeService {
      return this.getTerminalHandleForPaneKey(paneKey) ?? undefined
    }
  
@@ -411,13 +446,11 @@ index 000000000..27aa295bd
 +})
 diff --git a/src/shared/agent-status-session-surface.ts b/src/shared/agent-status-session-surface.ts
 new file mode 100644
-index 000000000..9e567605d
+index 000000000..74102ae4d
 --- /dev/null
 +++ b/src/shared/agent-status-session-surface.ts
-@@ -0,0 +1,94 @@
+@@ -0,0 +1,46 @@
 +import type { AgentStatusEntry, AgentStatusIpcPayload } from './agent-status-types'
-+import type { RuntimeMobileSessionSnapshotTab } from './runtime-types'
-+import { isTerminalLeafId, makePaneKey } from './stable-pane-id'
 +
 +// Why: on a desktop host, `buildMobileTerminalSurfaceTabs` hangs the renderer store's
 +// `AgentStatusEntry` off each session-tab surface, so every paired client (phone AND web) receives
@@ -462,50 +495,4 @@ index 000000000..9e567605d
 +    byPaneKey.set(row.paneKey, toSessionSurfaceAgentStatusEntry(row))
 +  }
 +  return byPaneKey
-+}
-+
-+function paneKeyForTerminalSurface(tab: {
-+  parentTabId: string
-+  leafId: string
-+}): string | null {
-+  // Why: makePaneKey throws on a ':'-bearing tab id, and this runs on every snapshot rebuild.
-+  if (!tab.parentTabId || tab.parentTabId.includes(':') || !isTerminalLeafId(tab.leafId)) {
-+    return null
-+  }
-+  return makePaneKey(tab.parentTabId, tab.leafId)
-+}
-+
-+/** Resolve agent status on session-tab surfaces AFTER upstream's snapshot merge.
-+ *
-+ *  Why: `mergeMobileSessionSnapshotTabs` dedupes by tab identity and keeps the CACHED tab, so the
-+ *  freshly rebuilt surface — the only one carrying current status — is discarded. That is safe for
-+ *  upstream, whose headless builder pins only stable topology there; `agentStatus` is hook-derived
-+ *  and time-varying, so it must be resolved after the merge rather than pinned by it. Otherwise the
-+ *  sole path that can refresh it is a `force: true` rebuild, whose only trigger is a hook CHANGE —
-+ *  which cannot fire on a host whose agents all exited before the last restart, freezing every pane
-+ *  as a plain terminal with no chat toggle. Resolving post-merge also repairs cached tabs.
-+ *
-+ *  Authoritative both ways: a pane with a hook row gains the entry, one without loses it — keeping a
-+ *  stale entry would advertise an agent the host no longer reports. */
-+export function resolveSessionSurfaceAgentStatus(
-+  tabs: readonly RuntimeMobileSessionSnapshotTab[],
-+  agentStatusByPaneKey: ReadonlyMap<string, AgentStatusEntry>,
-+  isExcludedTitle: (title: string) => boolean
-+): RuntimeMobileSessionSnapshotTab[] {
-+  return tabs.map((tab) => {
-+    if (tab.type !== 'terminal') {
-+      return tab
-+    }
-+    const paneKey = paneKeyForTerminalSurface(tab)
-+    const resolved =
-+      paneKey && !isExcludedTitle(tab.title) ? agentStatusByPaneKey.get(paneKey) : undefined
-+    if (resolved) {
-+      return resolved === tab.agentStatus ? tab : { ...tab, agentStatus: resolved }
-+    }
-+    if (tab.agentStatus == null) {
-+      return tab
-+    }
-+    const { agentStatus: _cleared, ...withoutAgentStatus } = tab
-+    return withoutAgentStatus
-+  })
 +}
