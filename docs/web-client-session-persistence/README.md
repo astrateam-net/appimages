@@ -112,8 +112,6 @@ Still open, unaffected by this fix:
 - **Manage Sessions is a stub** (`web-preload-api.ts` hard-codes `listSessions: () => ({sessions: []})`),
   so the tile cannot see or kill a wedged session. Real loss of recovery.
 - **The model picker does not self-populate.**
-- **Nothing re-opens the previously open worktrees.** The tile lands on "Select a workspace from the
-  sidebar to begin" because `activeWorktreeIdsOnShutdown` / `activeWorkspaceKey` /
-  `sleepingAgentSessionsByPaneKey` are written by the desktop renderer's quit path, which `orca serve`
-  does not have — the host's `workspaceSession` has none of those keys while the Mac's has all three.
-  Separate capability; not diagnosed further here.
+- **Nothing re-opens the previously open worktrees** — the tile lands on "Select a workspace from
+  the sidebar to begin". Separate capability, parked with its measurements and open questions in
+  [`web-client-workspace-restore`](../web-client-workspace-restore/).
