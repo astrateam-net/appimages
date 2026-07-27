@@ -65,7 +65,7 @@ Top by call count: `ui` 32, `pty` 15, `terminal` 9, `window` 7, `ssh` 7, `speech
 (`repos:` → `repo.*`, `pty:` → `terminal.*`), and some are legitimately renderer-only (`window`,
 `ui`) — so this is a lead list, not a defect list. Each candidate needs its own trace.
 
-## 3. ⛔ BLOCKING — no headless cold restore (S1 + S3)
+## 3. ✅ FIXED in `0012` — headless cold restore (was the blocker)
 
 **Symptom (live, 2026-07-27):** after a workspace restart, opening an agent pane in the tile renders
 the full transcript in chat view, but typing in the composer lands in a bare shell:
@@ -95,10 +95,11 @@ Ruled out as the seam:
 - `getFreshRetainedAgentStatusForMobileTab` — reads `latestAgentStatusByPaneKey` (live ingest only,
   never disk hydration) and drops rows older than 30 min. Empty after any restart.
 
-**Open decision before implementing:** desktop hibernation resumes silently on worktree open
-("nothing to click"), while after a host reboot the docs say to use the Restart chip. Auto-resume on
-open means every worktree click spawns an agent process. Mirror desktop, but the two desktop cases
-differ — resolve which one a restarted headless host corresponds to.
+**There was no decision to make** — and asking the owner for one was the wrong instinct. Sleep is an
+explicit context-menu command he had not used; a full Mac reboot restores working sessions on its
+own. So desktop cold-restores automatically and headless mirrors that, full stop. `0012` does it: the
+host reads its own hook rows and resumes. The gate was `ensureAgentSession` refusing
+`kind: 'automatic'` — correct for client-supplied sleep records, irrelevant to the host's own cache.
 
 ## 4. web-preload stubs (S1/S2) — 238 hardcoded returns
 
@@ -120,6 +121,7 @@ legitimately inert. The ones that cost real capability so far:
 
 | Capability | Patch | Verified |
 |---|---|---|
+| A dead agent pane resumes against its provider session instead of spawning a bare shell | `0012` | Unit 5/5 on the decision logic. **Live: unproven** — needs a restart plus typing in the composer |
 | Agent identity + `providerSession` + transcript reach the browser, survive restart **and** republish by any of the 11 snapshot producers | `0011` | Live: `session.tabs.listAll` → 3/18 panes carry `agentStatus` with transcript paths, 0 hooks fired in 3h; chat renders both transcripts. **Does not make the session live — see §3.** |
 
 ## 6. Method
