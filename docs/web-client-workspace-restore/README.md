@@ -1,4 +1,4 @@
-# PARKED — nothing on a headless host records which worktrees were open
+# NEXT UP — nothing on a headless host records which worktrees were open
 
 > **Status: parked 2026-07-27, not diagnosed.** Raised while fixing the agent-status freeze
 > ([`web-client-session-persistence`](../web-client-session-persistence/)) and deliberately kept out
@@ -63,18 +63,40 @@ with a `hostId` on `session:get/set/patch`), but on desktop those partitions are
 never pushed to the remote host. For a browser the "client's own store" is `localStorage`, which
 upstream sanitizes to nothing — the exact "wrong locality" shape, where local IS the server.
 
-**Open questions to settle before writing anything:**
+**Superseded by `0011`/`0012` — do NOT route this through the client.** The lead above assumed the
+fix was "let the browser read the host's session". Two patches later the proven shape is the
+opposite: **the host does it itself, from its own disk, at the single point that replaces the
+renderer's mechanism.** `0012` needed no client change and no `sleepingAgentSessionsByPaneKey` at
+all — the host's own hook rows were sufficient authority. Expect the same here: the host already
+persists `tabsByWorktree` / `terminalLayoutsByTabId` and already knows which tabs carry serve-owned
+PTY bindings (`hasServeOrSshOwnedBinding`), so it can derive "which worktrees were open" without any
+client-supplied record.
 
-1. Does the *desktop* app restore a session when driving a **remote** runtime? If it does not, this
-   is upstream behaviour for remote hosts and not orca-coder-specific — that changes the fix.
-2. Would having the client read the host's `workspaceSession` actually restore panes, or does
-   restore also need the PTY reattach path that a dead daemon cannot provide? (`0011`'s lesson: a
-   path existing in source is not evidence it is taken.)
-3. Two writers hazard: the runtime already writes `workspaceSession` on `session.tabs.*` mutations.
-   If the client also writes a full payload built from its own store, they will fight. Upstream's
-   desktop split has exactly one writer per partition.
-4. What does upstream intend for `sleepingAgentSessionsByPaneKey` on a headless host — is agent
-   hibernation reachable there at all?
+**Answered since parking:**
+
+- *Would restore actually bring panes back live, or is the PTY unreachable after a dead daemon?* →
+  Live. `0012` resumes an exited agent from `providerSession`, verified with 4 live `claude`
+  processes after a restart. Restore and cold restore compose: restore decides *which* panes open,
+  `0012` makes each one live.
+- *What about `sleepingAgentSessionsByPaneKey` on a headless host?* → Not needed. It is the desktop
+  renderer's registry; the host's `agent-hooks` cache carries the same facts and survives restarts.
+
+**Still genuinely open:**
+
+1. Does the *desktop* app restore a session when driving a **remote** runtime? If not, this is
+   upstream behaviour for remote hosts, not orca-coder-specific — that changes the fix.
+2. Two-writers hazard: the runtime already writes `workspaceSession` on `session.tabs.*` mutations.
+   Whatever writes the which-was-open fields must be the *only* writer of them. Upstream's desktop
+   split keeps exactly one writer per partition.
+3. Which field is authoritative for the web client. `activeWorktreeIdsOnShutdown` is what
+   `terminals.ts:3163` prefers, but its fallback derives from `tabsByWorktree` — which
+   `sanitizeWebRuntimeWorkspaceSession` empties for a browser. So either the host supplies the field,
+   or the client's hydration has to stop reading a sanitized session for this decision. Decide which
+   before writing.
+
+**Placement:** run `orca-coder-patch-audit` step 0 with the real symbols once diagnosis names them.
+`0012`'s audit returned `NEW_PATCH_BUT_CHECK` for the analogous case, so expect `0013` rather than an
+extension — but do not assume it.
 
 ## 4. How to measure it cheaply
 
