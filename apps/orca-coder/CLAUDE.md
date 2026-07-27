@@ -193,6 +193,23 @@ re-mint every boot. Phones therefore survive restarts. Tokens are never echoed; 
   the pane blanked on every terminal↔chat toggle. Fill the surface and upstream's own mirror does the
   rest. Headless snapshots are built once and cached, so a hook change must force a rebuild;
   bumping the cached version alone re-emits stale status.
+- **A time-varying field on a headless snapshot must be resolved AFTER the merge, never stamped
+  during the build.** `mergeMobileSessionSnapshotTabs` dedupes by tab identity and keeps the
+  **cached** tab, silently dropping the freshly built one — correct for upstream, which pins only
+  stable topology there. Stamp `agentStatus` at build time and every rebuild discards it; the only
+  path that replaces wholesale is a `force: true` rebuild, whose sole trigger is a hook **change**,
+  which cannot fire on a host whose agents all exited before the last restart. The symptom is
+  therefore invisible while an agent is live and permanent afterwards — "worked before the restart"
+  is a signal to check the cache, not the wire. Resolving post-merge also repairs the cached tabs,
+  so the first `listAll` heals a frozen snapshot. Make it authoritative both ways or a dead agent
+  stays advertised.
+- **The browser holds no session, by upstream design.** `sanitizeWebRuntimeWorkspaceSession` keeps
+  only `activeRepoId`, `activeWorktreeId`, `browserUrlHistory`, `lastVisitedAtByWorktreeId` — the
+  web client is deliberately stateless and is fed from the host over `session.tabs`. An empty
+  `localStorage` session is therefore never the bug; look at what the host builds. Corollary for
+  triage: the host's disk (`orca-data.json`, `agent-hooks/last-status.json`, the agent transcripts)
+  is the source of truth, and `orca-ide worktree ps --json` on the host tells you in one call
+  whether the runtime still has the data the tile is missing.
 - **Pane keys differ between host and web, and upstream already translates.** Web panes are
   `web-terminal-<hostTabId>:<leafId>`; anything host-stamped (`ORCA_PANE_KEY`, hook rows,
   `orca terminal list`) is `<hostTabId>:<leafId>`. Forwarding host-keyed rows straight to the

@@ -72,12 +72,50 @@ The earlier reasoning that this channel must not carry `providerSession` because
 publishes the full entry there, which is exactly how a phone paired to a Mac shows chat at all. The
 runtime-scope-only rule belongs to the `agentStatus.*` RPC family, which no longer exists.
 
+**Third failure — the field was filled and then discarded (2026-07-27):** the surface fix above is
+correct and still did nothing after a workspace restart. Every agent pane came back as a plain
+terminal with no chat toggle, and stayed that way. Measured live from the tile:
+`session.tabs.listAll` returned **19 terminal surfaces, 0 carrying `agentStatus`** — on pane keys
+byte-identical to the hook rows, with live `ptyId`s — while the same host's `worktree.ps` reported
+all 5 agents with `state`, `agentType` and `providerSession`. So the break was hop 2, the host's own
+build, not the browser: `localStorage` holds nothing by upstream design
+(`sanitizeWebRuntimeWorkspaceSession` keeps 4 fields), and the host's disk held everything —
+`workspaceSession` with 11 worktrees of tabs, and 2.5 MB of transcripts.
+
+**Cause:** `mergeMobileSessionSnapshotTabs` dedupes by tab identity and keeps the **cached** tab, so
+a status stamped at build time was thrown away on every rebuild. That merge is upstream's and is
+safe there — upstream's headless builder pins only stable topology on those tabs. `agentStatus` is
+hook-derived and time-varying, so stamping it during the build put a field into a snapshot upstream's
+merge is entitled to pin. The only path that replaced wholesale rather than merging was a
+`force: true` rebuild, and its sole trigger is the hook **change** signal this patch added — which
+can never fire on a host whose agents all exited before the last restart. Hence the exact shape of
+the report: correct while an agent was live, permanently frozen after a restart. Timeline confirming
+it: last hook write 23:47:53, serve restart 00:14:04, snapshots frozen at 00:15:03, still statusless
+at 01:05.
+
+**Fix:** resolve the field **after** the merge (`resolveSessionSurfaceAgentStatus`) instead of during
+the build, at the consumer rather than by changing what upstream's merge means (CLAUDE.md §5 — never
+redefine an absence upstream already encodes). Post-merge resolution also repairs the cached tabs the
+merge preserved, so the first `listAll` after a restart heals the snapshot without needing any hook
+to fire. Authoritative both ways: a pane with a hook row gains the entry, one without loses it — a
+retained entry would advertise an agent the host no longer reports. The hook-row index moves up one
+scope, built once per hydrate rather than once per worktree.
+
 **Placement:** audit returned `EXTEND_EXISTING` on `createWebAgentStatusApi` + `getAgentStatusIpcRows`
 — a fix to this patch's own logic, so its boundary was restacked rather than taking a new number
 (CLAUDE.md §0.4). `buildHeadlessMobileSessionTerminalTabs` came back as `not_in_series`, i.e.
 upstream's, so it is extended rather than reinvented.
-**Acceptance:** `shared/agent-status-session-surface.test.ts`; live tile — chat renders the
-transcript, the picker shows a model, and both survive a terminal↔chat toggle.
+The third fix re-ran the same audit with the merge symbols: `EXTEND_EXISTING → 0011` again, with
+`mergeMobileSessionSnapshotTabs`, `hydrateHeadlessMobileSessionTabsFromWorkspaceSession` and
+`headlessMobileSnapshotContentUnchanged` all returned as `not_in_series` — upstream's, so resolved at
+the consumer rather than modified.
+**Acceptance:** `shared/agent-status-session-surface.test.ts`, and
+`main/runtime/headless-agent-status-surface.test.ts` — drives the real client entry point
+(`listAllMobileSessionTabs`) against a cached statusless snapshot and asserts both directions
+(stamped when a hook row exists, cleared when it does not); both cases fail without the post-merge
+resolution. Live tile — chat renders the transcript, the picker shows a model, both survive a
+terminal↔chat toggle, and **agent panes still offer chat after a workspace restart with no agent
+running**.
 
 ## 0010 — bridge usage analytics to the web client
 
