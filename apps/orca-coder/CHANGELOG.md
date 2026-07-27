@@ -17,6 +17,55 @@ throw-on-call. Most "works on desktop, dead in the tile" reports are one of thos
 
 ---
 
+## 0012 — cold-restore a dead agent pane on a headless host
+
+`patches/0012-web-headless-agent-cold-restore.patch`
+
+**Symptom:** after a workspace restart, opening an agent pane in the tile renders its full transcript
+in chat view — and typing in the composer lands in a shell: `bash: command not found: THIS`. Owner
+reproduced it deliberately after `0011` shipped.
+
+**Cause:** native chat is a TUI wrapper — `sendNativeChatMessage(settings, ptyId, text)` writes bytes
+into the pane's PTY. So a pane backed by a plain shell shows real history beside a composer talking
+to bash. Desktop never has that state: `pty-connection.ts` builds `coldRestoreStartup` from
+`entry.agentType` + `entry.providerSession` and respawns with `resumeProviderSession` (7+ sites). That
+decision is renderer-only. `orca serve` has no renderer, so the materialize path in
+`activateMobileSessionTab` launched an agent only when `tab.launchAgent` was set — **null on every
+pane measured live** — and even then started a *fresh* agent, never a resume.
+
+Ruled out as the seam: `terminal.recoverPane` requires a recently-expired SSH lease
+(`getRecentExpiredSshLease`, else `terminal_not_recoverable`) and passes no resume;
+`session.tabs.createTerminal` has no `resumeProviderSession` field at all;
+`getFreshRetainedAgentStatusForMobileTab` reads `latestAgentStatusByPaneKey` (live ingest only) and
+drops rows past `AGENT_STATUS_STALE_AFTER_MS` — empty after any restart.
+
+**Fix:** the host holds the same facts the desktop store does — agent-hook rows, hydrated from disk
+at startup, carrying `agentType` + `providerSession` for exactly the panes that had agents.
+`resolveHeadlessAgentColdRestore` reads them by pane key and the materialize path resumes.
+`resolveMobileSessionTerminalCommand` gains an optional `resumeProviderSession` and switches to
+upstream's `buildAgentResumeStartupPlan` (already imported in this file) so both variants share one
+platform/shell/override resolution and only the argv differs; a non-resumable agent or unusable
+session id falls back to a fresh launch instead of failing the tab open. `createTerminal` already
+accepted `resumeProviderSession` — only the passthrough through
+`createHeadlessMobileSessionTerminal` was missing.
+
+`ensureAgentSession`'s `kind: 'automatic'` refusal is left untouched: it exists because
+**client**-supplied sleep records are not host authority. This host's own hook cache is, which is
+what authorizes an automatic resume here.
+
+**Placement:** audit returned `NEW_PATCH_BUT_CHECK`; `activateMobileSessionTab`,
+`createHeadlessMobileSessionTerminal` and `resolveMobileSessionTerminalCommand` all came back
+`not_in_series` (upstream's). Considered `0011` — it *delivers* agent status to clients and its
+acceptance passes without this patch; this one *acts* on that status to relaunch a process. Two
+capabilities that share a data source, not one split in two (CLAUDE.md §0.2). Also considered
+`0009` (headless orchestration delivery) and `0008` (execution owner): neither touches agent launch.
+**Acceptance:** `main/runtime/headless-agent-cold-restore.test.ts` — resolves claude + session id
+from a hook row; declines no row, a non-resumable agent, an absent provider session, and a legacy
+non-UUID leaf. **Not yet proven live:** that the resumed process attaches and answers in the
+composer — that is the owner's restart test.
+
+---
+
 ## 0011 — bridge agent status to the web client
 
 `patches/0011-web-agent-status-bridge.patch`
