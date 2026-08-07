@@ -4,7 +4,7 @@
 
 variable "VERSION" {
   // renovate: datasource=github-releases depName=stablyai/orca
-  default = "v1.4.156"
+  default = "v1.4.176"
 }
 
 variable "SOURCE" {
