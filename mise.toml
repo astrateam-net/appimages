@@ -6,7 +6,7 @@ min_version = "2026.7.11"
 
 [tools]
 jq = "1.8.2"   # latest at pin time; bump with `mise up --bump`
-ruff = "0.16.0" # lints the agent-tooling Python under .claude/skills/; `mise run lint`
+ruff = "0.16.2" # lints the agent-tooling Python under .claude/skills/; `mise run lint`
 
 [hooks]
 enter = ["mise install"]
